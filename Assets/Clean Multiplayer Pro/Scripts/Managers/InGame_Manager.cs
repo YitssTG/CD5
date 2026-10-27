@@ -41,18 +41,12 @@ namespace AvocadoShark
         }
         public void LeaveRoom()
         {
-            var fusionManager = FindFirstObjectByType<FusionConnection>();
-            if (fusionManager != null)
-            {
-                Destroy(fusionManager);
-            }
-            Runner.Shutdown();
-            SceneManager.LoadScene("Menu");
+            if (FusionConnection.Instance != null) FusionConnection.Instance.ReturnToMenu();
         }
         private float smoothedRTT = 0.0f;
         private void LateUpdate()
         { 
-            if(!Object)
+            if(!Object || Runner == null || !Runner.IsRunning)
                 return;
             room_name.text = Runner.SessionInfo.Name;
             players.text = Runner.SessionInfo.PlayerCount + "/" + Runner.SessionInfo.MaxPlayers;
@@ -75,9 +69,10 @@ namespace AvocadoShark
             }
             if (!Runner.IsSceneAuthority) 
                 return;
-            //Assuming envir scene in additive mode is loaded at 1 index
-            var environmentSceneIndex = 1;
-            var environmentScene = SceneManager.GetSceneAt(environmentSceneIndex);
+            // UI is also loaded additively; do not depend on scene ordering.
+            var environmentScene = SceneManager.GetSceneByBuildIndex(environment1);
+            if (!environmentScene.isLoaded) environmentScene = SceneManager.GetSceneByBuildIndex(environment2);
+            if (!environmentScene.IsValid() || !environmentScene.isLoaded) return;
             print(environmentScene.name);
             var isEnvironment1 = environmentScene.buildIndex == environment1;
             var sceneToLoad = isEnvironment1 ? environment2 : environment1;
@@ -94,7 +89,8 @@ namespace AvocadoShark
 
         public void PauseGame()
         {
-            if (FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs starterAssetsInputs))
+            if (CyberDefense.UI.HeatSessionUI.OpenPause()) return;
+            if (FusionConnection.Instance != null && FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs starterAssetsInputs))
             {
                 starterAssetsInputs.DisablePlayerInput();
             }
@@ -104,9 +100,10 @@ namespace AvocadoShark
         }
         public void ResumeGame()
         {
+            if (CyberDefense.UI.HeatSessionUI.ClosePause()) return;
             pauseMenu.SetActive(false);
             //inputActionAsset.Enable();
-            if (FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs starterAssetsInputs))
+            if (FusionConnection.Instance != null && FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs starterAssetsInputs))
             {
                 starterAssetsInputs.EnablePlayerInput();
             }

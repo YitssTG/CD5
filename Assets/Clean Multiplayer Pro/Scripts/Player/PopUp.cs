@@ -17,14 +17,7 @@ public class PopUp : MonoBehaviour
 
     public void DisablePopup()
     {
-        var fusionManager = FindFirstObjectByType<FusionConnection>();
-        if (fusionManager != null)
-        {
-            if (fusionManager.Runner)
-                fusionManager.Runner.Shutdown();
-            Destroy(fusionManager);
-        }
-        SceneManager.LoadScene("Menu");
+        if (FusionConnection.Instance != null) FusionConnection.Instance.ReturnToMenu();
     }
 }
 #endif

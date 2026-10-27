@@ -61,7 +61,7 @@ namespace AvocadoShark
 
         private void OnDestroy()
         {
-
+            if (playerStats != null) playerStats.OnSpeaking -= ToggleVoiceUI;
         }
     }
 }

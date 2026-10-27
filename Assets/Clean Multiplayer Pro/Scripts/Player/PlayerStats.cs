@@ -29,10 +29,12 @@ namespace AvocadoShark
         [SerializeField] TextMeshPro playerNameLabel;
 
         public static PlayerStats instance;
+        public PlayerRef SessionPlayer { get; private set; }
 
         public Action<string> OnPlayerStatsReady;
         public override void Spawned()
         {
+            SessionPlayer = Object.StateAuthority;
             _changeDetector = GetChangeDetector(ChangeDetector.Source.SimulationState);
             GetComponent<PlayerWorldUIManager>().OnSpeaking += Speaking;
             if (HasStateAuthority)
@@ -45,10 +47,11 @@ namespace AvocadoShark
                 {
                     instance = this;
                 }
+                SessionPlayers.instance.AddPlayer(this);
             }
             else
             {
-                SessionPlayers.instance.AddPlayer(this);
+                if (!string.IsNullOrEmpty(PlayerName.ToString())) SessionPlayers.instance.AddPlayer(this);
                 playerNameLabel.text = !HasStateAuthority ? PlayerName.ToString() : "";
             }
 
@@ -259,8 +262,7 @@ namespace AvocadoShark
         private IEnumerator RemovePlayerAfterDelay(float time)
         {
             yield return new WaitForSeconds(time);
-            Runner.Shutdown();
-            SceneManager.LoadScene(0);
+            if (FusionConnection.Instance != null) FusionConnection.Instance.ReturnToMenu();
         }
 
         public void OnPositiveVote(int previous, int current)
@@ -275,13 +277,20 @@ namespace AvocadoShark
 
         public override void Despawned(NetworkRunner runner, bool hasState)
         {
-            SessionPlayers.instance.RemovePlayer(this);
-            if (VoteKick)
+            if (SessionPlayers.instance != null)
             {
-                SessionPlayers.instance.RemoveVoteKick(this);
-                RPC_PlayerVoteResultMessage(
-                    $"Vote kick failed");
+                SessionPlayers.instance.RemovePlayer(this);
+                if (hasState && VoteKick) SessionPlayers.instance.RemoveVoteKick(this);
             }
+            if (instance == this) instance = null;
+            var worldUI = GetComponent<PlayerWorldUIManager>();
+            if (worldUI != null) worldUI.OnSpeaking -= Speaking;
+        }
+
+        private void OnDestroy()
+        {
+            if (SessionPlayers.instance != null) SessionPlayers.instance.RemovePlayer(this);
+            if (instance == this) instance = null;
         }
 
         [Rpc(sources: RpcSources.Proxies, targets: RpcTargets.StateAuthority)]

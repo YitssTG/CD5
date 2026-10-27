@@ -16,7 +16,7 @@ public class VoiceManager : MonoBehaviour
     // VOICE INPUT  
     private void Update()
     {
-        if (!runner.IsConnectedToServer || ReferenceEquals(_input,null))
+        if (runner == null || !runner.IsConnectedToServer || _input == null || _playerUIManager == null)
             return;
 
         recorder.TransmitEnabled = _input.pushToTalk;

@@ -28,7 +28,12 @@ namespace AvocadoShark
         public override void Spawned()
         {
             var thirdPersonController = GetComponent<ThirdPersonController>();
-            if (HasStateAuthority)
+            bool isLocal = HasStateAuthority && Object.StateAuthority == Runner.LocalPlayer;
+            AssetInputs.SetLocalControl(isLocal);
+            PlayerInput.enabled = isLocal;
+            thirdPersonController.enabled = false;
+            Debug.Log($"[LocalControl] avatar={Object.Id} local={Runner.LocalPlayer} owner={Object.StateAuthority} stateAuthority={HasStateAuthority} inputAuthority={HasInputAuthority} enabled={isLocal} devices={PlayerInput.devices.Count} scheme={PlayerInput.currentControlScheme}");
+            if (isLocal)
             {
                 // _rigidbody.MovePosition(new Vector3(Random.Range(-7.6f, 14.2f), 0,
                 //     Random.Range(-31.48f, -41.22f)));

@@ -4,13 +4,16 @@ using StarterAssets;
 
 public class PlayerRole : NetworkBehaviour
 {
-    public enum RoleType { SinAsignar, Admin, Pentester }
-
     [Header("Configuración de Rol")]
-    public RoleType rolInicial;
+    [Tooltip("Valor heredado. El rol se asigna en partida a través de RoleManager; este campo ya no se usa.")]
+    public RoleType rolInicial = RoleType.SinAsignar;
+
     [Networked] public RoleType MyRole { get; set; }
 
     private StarterAssetsInputs _input;
+    private RoleType _lastVisualRole = (RoleType)(-1);
+
+    public bool IsRoleAssigned => MyRole != RoleType.SinAsignar;
 
     private void Awake()
     {
@@ -19,15 +22,63 @@ public class PlayerRole : NetworkBehaviour
 
     public override void Spawned()
     {
-        Debug.Log("🟢 PlayerRole Spawned!");
-        if (Object.HasStateAuthority) MyRole = rolInicial;
         _input = GetComponent<StarterAssetsInputs>();
-        gameObject.name = "Player_" + MyRole.ToString();
+
+        if (Object.HasStateAuthority)
+        {
+            // El rol ya no se hereda del prefab: se decide en la fase de selección.
+            // Si el RoleManager ya confirma un rol para este jugador (por ejemplo,
+            // si se reconecta) lo aplicamos; si no, queda SinAsignar.
+            MyRole = RoleType.SinAsignar;
+            if (RoleManager.Instance != null && RoleManager.Instance.IsOnline)
+                MyRole = RoleManager.Instance.GetRole(Object.StateAuthority);
+        }
+
+        UpdateIdentity();
+    }
+
+    public override void Render()
+    {
+        UpdateIdentity();
+    }
+
+    // Llamado por RoleManager cuando el arbitraje confirma el rol del jugador local.
+    public void SetRole(RoleType role)
+    {
+        if (Object == null || !Object.IsValid || !Object.HasStateAuthority) return;
+        MyRole = role;
+        UpdateIdentity();
+    }
+
+    private void UpdateIdentity()
+    {
+        if (_lastVisualRole == MyRole) return;
+        _lastVisualRole = MyRole;
+        gameObject.name = "Player_" + MyRole;
     }
 
     // Llamado desde ZonaInteraccion
     public void InteractuarCon(GameObject objeto)
     {
+        if (RoleManager.Instance == null || !RoleManager.Instance.IsOnline || !RoleManager.Instance.GameStarted)
+        {
+            Debug.Log("⏳ La partida aún no ha comenzado. Selecciona un rol primero.");
+            return;
+        }
+
+        if (MyRole == RoleType.SinAsignar)
+        {
+            Debug.Log("⚠️ No tienes un rol asignado.");
+            return;
+        }
+
+        if (CooperativeIncident.Instance != null)
+        {
+            if (Object != null && Object.IsValid && Object.HasStateAuthority)
+                RoleTerminalUI.OpenLocalTerminal();
+            return;
+        }
+
         Debug.Log($"🚀 InteractuarCon: {objeto.name} | Rol: {MyRole}");
 
         ServidorRed servidor = objeto.GetComponent<ServidorRed>();

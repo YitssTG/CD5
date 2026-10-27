@@ -22,6 +22,7 @@ public class SessionPlayerUIPanel : MonoBehaviour {
     }
 
     public void AddNewPlayerPortrait(PlayerStats playerStats) {
+        if (playerStats == null || playerUIEntryList.ContainsKey(playerStats)) return;
         GameObject portraitInstance = Instantiate(playerPortraitPrefab, transform);
         PlayerUIEntry playerUIEntry = portraitInstance.GetComponent<PlayerUIEntry>();
         playerUIEntryList.Add(playerStats, playerUIEntry);
@@ -43,9 +44,24 @@ public class SessionPlayerUIPanel : MonoBehaviour {
     }
 
     public void RemovePlayerPortrait(PlayerStats playerStats) {
-        OnToggleButtonAfterPlayersChange -= playerUIEntryList[playerStats].ToggleVoteKickButton;
-        Destroy(playerUIEntryList[playerStats].gameObject);
+        if (!playerUIEntryList.TryGetValue(playerStats, out var entry)) return;
+        if (entry != null) {
+            OnToggleButtonAfterPlayersChange -= entry.ToggleVoteKickButton;
+            entry.OnVoteKick -= InitiateVoteKick;
+            Destroy(entry.gameObject);
+        }
         playerUIEntryList.Remove(playerStats);
+    }
+
+    private void OnDestroy() {
+        if (sessionPlayersRef != null) {
+            sessionPlayersRef.OnPlayerAddedToSession -= AddNewPlayerPortrait;
+            sessionPlayersRef.OnPlayerRemovedFromSession -= RemovePlayerPortrait;
+            sessionPlayersRef.OnPlayerAddedToSession -= ToggleVoteKickButton;
+            sessionPlayersRef.OnPlayerRemovedFromSession -= ToggleVoteKickButton;
+        }
+        OnToggleButtonAfterPlayersChange = null;
+        playerUIEntryList.Clear();
     }
 
     public void InitiateVoteKick(PlayerStats playerStats) {

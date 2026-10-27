@@ -1,6 +1,5 @@
 ﻿#if CMPSETUP_COMPLETE
 using System;
-using UnityEditor;
 using UnityEngine;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
@@ -10,6 +9,23 @@ namespace StarterAssets
     public class StarterAssetsInputs : MonoBehaviour
     {
         [SerializeField] private bool isPlayerWritingChat = false;
+        private bool localControl;
+        private bool gameplayBlocked = true;
+        public bool IsBlocked => !localControl || gameplayBlocked || isPlayerWritingChat;
+
+        public void SetLocalControl(bool value) { localControl = value; ClearInput(); }
+        public void SetGameplayBlocked(bool value)
+        {
+            if (gameplayBlocked == value) return;
+            gameplayBlocked = value;
+            if (IsBlocked) ClearInput();
+            Debug.Log($"[LocalControl] gameplayBlocked={value} chatBlocked={isPlayerWritingChat} local={localControl}");
+        }
+        private void ClearInput()
+        {
+            move = look = Vector2.zero;
+            jump = sprint = interact = pushToTalk = false;
+        }
         public InputActionReference PushToTalkAction, moveAction, lookAction, jumpAction;
         public InputActionReference interactAction;
 
@@ -38,6 +54,7 @@ namespace StarterAssets
         public void OnSprint(InputValue value) { SprintInput(value.isPressed); }
         public void OnCursorState(InputValue value)
         {
+            if (IsBlocked) return;
             if (Cursor.lockState is CursorLockMode.None)
             {
                 Cursor.lockState = CursorLockMode.Locked;
@@ -51,29 +68,34 @@ namespace StarterAssets
         }
         private void EnablePushToTalk(InputAction.CallbackContext context)
         {
-            if (isPlayerWritingChat) return;
+            if (IsBlocked) return;
             pushToTalk = true;
         }
         private void DisablePushToTalk(InputAction.CallbackContext context)
         {
-            if (isPlayerWritingChat) return;
+            if (!localControl) return;
             pushToTalk = false;
         }
         private void EnableInteract(InputAction.CallbackContext context)
         {
-            if (isPlayerWritingChat) return;
+            if (IsBlocked) return;
             Debug.Log("🎮 EnableInteract llamado!");
             interact = true;
             OnInteractPressed?.Invoke(); // dispara inmediatamente
         }
 #endif
-        public void MoveInput(Vector2 newMoveDirection) { if (isPlayerWritingChat) return; move = newMoveDirection; }
-        public void LookInput(Vector2 newLookDirection) { if (isPlayerWritingChat) return; look = newLookDirection; }
-        public void JumpInput(bool newJumpState) { if (isPlayerWritingChat) return; jump = newJumpState; }
-        public void SprintInput(bool newSprintState) { if (isPlayerWritingChat) return; sprint = newSprintState; }
-        private void OnApplicationFocus(bool hasFocus) { SetCursorState(cursorLocked); }
-        private void SetCursorState(bool newState) { Cursor.lockState = newState ? CursorLockMode.Locked : CursorLockMode.None; }
-        public void DisablePlayerInput() { isPlayerWritingChat = true; move = Vector2.zero; look = Vector2.zero; }
+        public void MoveInput(Vector2 newMoveDirection) { if (IsBlocked) return; move = newMoveDirection; }
+        public void LookInput(Vector2 newLookDirection) { if (IsBlocked) return; look = newLookDirection; }
+        public void JumpInput(bool newJumpState) { if (IsBlocked) return; jump = newJumpState; }
+        public void SprintInput(bool newSprintState) { if (IsBlocked) return; sprint = newSprintState; }
+        private void OnApplicationFocus(bool hasFocus)
+        {
+            if (!localControl) return;
+            if (!hasFocus) { ClearInput(); return; }
+            Cursor.lockState = IsBlocked ? CursorLockMode.None : CursorLockMode.Locked;
+            Cursor.visible = IsBlocked;
+        }
+        public void DisablePlayerInput() { isPlayerWritingChat = true; ClearInput(); }
         public void EnablePlayerInput() { isPlayerWritingChat = false; }
         private void Awake()
         {
@@ -82,6 +104,14 @@ namespace StarterAssets
             PushToTalkAction.action.canceled += DisablePushToTalk;
             interactAction.action.Enable();
             interactAction.action.performed += EnableInteract;
+        }
+
+        private void OnDestroy()
+        {
+            // The actions belong to a shared asset; only remove this player's listeners.
+            PushToTalkAction.action.performed -= EnablePushToTalk;
+            PushToTalkAction.action.canceled -= DisablePushToTalk;
+            interactAction.action.performed -= EnableInteract;
         }
     }
 }

@@ -42,6 +42,9 @@ public class ZonaInteraccion : MonoBehaviour
         bool esMiJugador = _jugadorDentro.Object.HasInputAuthority || _jugadorDentro.Object.HasStateAuthority;
         if (!esMiJugador) return;
 
+        // La partida solo permite interactuar cuando ha comenzado (roles asignados).
+        if (RoleManager.Instance == null || !RoleManager.Instance.IsOnline || !RoleManager.Instance.GameStarted) return;
+
         var input = _jugadorDentro.GetComponent<StarterAssetsInputs>();
         if (input == null || !input.interact) return;
 

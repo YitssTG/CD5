@@ -40,6 +40,7 @@ public class ChatSystem : MonoBehaviour
 
     private void OnDisable()
     {
+        if (_chatPlayer != null) _chatPlayer.SetPlayerIsWriting(false);
         chatInput.onSelect.RemoveListener(InputInFocus);
         chatInput.onDeselect.RemoveListener(InputLostFocus);
         chatInput.onSubmit.RemoveListener(InputSubmit);
@@ -49,6 +50,7 @@ public class ChatSystem : MonoBehaviour
     public void SetChatPlayer(ChatPlayer chatPlayer)
     {
         _chatPlayer = chatPlayer;
+        _chatPlayer.SetPlayerIsWriting(chatInput.isFocused);
     }
 
     public void AddChatEntry(bool isLeft,Chat chat)
@@ -64,18 +66,18 @@ public class ChatSystem : MonoBehaviour
     public void InputInFocus(string text)
     {
         chatInput.MoveTextEnd(false);
-        _chatPlayer.SetPlayerIsWriting(true);
+        if (_chatPlayer != null) _chatPlayer.SetPlayerIsWriting(true);
     }
 
     public void InputLostFocus(string text)
     {
-        _chatPlayer.SetPlayerIsWriting(false);
+        if (_chatPlayer != null) _chatPlayer.SetPlayerIsWriting(false);
     }
 
 
     public void InputSubmit(string text)
     {
-        if (text != "")
+        if (_chatPlayer != null && text != "")
         {
             chatInput.ActivateInputField();
             var trimmedText = text.Trim();

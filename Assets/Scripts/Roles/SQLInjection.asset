@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 620245a895bd4dda887f9555aa75fb69, type: 3}
+  m_Name: SQLInjection
+  m_EditorClassIdentifier: Assembly-CSharp::IncidentDefinition
+  incidentId: SQLI-001
+  title: Acceso anomalo al portal de matriculas
+  wrongReportPenalty: 10
+  wrongReportDelay: 5
+  interactionRadius: 4
+  evidence: "[09:41:02] Portal de matriculas: solicitud de inicio de sesion.\n[09:41:02] Campo usuario contiene comillas y una condicion logica inesperada.\n[09:41:02] Traza: entrada del formulario concatenada en una consulta SQL.\n[09:41:03] La consulta devuelve varias cuentas; el usuario no tenia una sesion valida.\n[09:41:04] No hay una secuencia masiva de intentos ni correos sospechosos.\n\nEvidencia simulada: identifica que frontera entre datos e instrucciones se ha perdido."
+  explanation: "La aplicacion concatenaba datos del usuario con instrucciones SQL. Esto permitia alterar la consulta. Las consultas parametrizadas separan instrucciones y valores: la entrada se trata como datos. Reiniciar o cambiar una clave no elimina esta causa. La contencion limita el impacto, pero no sustituye la reparacion. La verificacion simulo una entrada sospechosa rechazada y un acceso legitimo correcto. El Pentester aporto evidencias y verifico; el Administrador contuvo y reparo. Todo el ejercicio es simulado."

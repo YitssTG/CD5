@@ -30,8 +30,10 @@ public class ServidorRed : NetworkBehaviour
 
     // --- SOLUCIÓN ERROR 1: Usamos RPC para que todos vean los cambios ---
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-    public void RPC_RecibirAtaquePentester()
+    public void RPC_RecibirAtaquePentester(RpcInfo info = default)
     {
+        if (!CanAct(info.Source, RoleType.Pentester)) return;
+
         if (EstadoActual == EstadoServidor.Normal)
         {
             CodigoMitigacion = Random.Range(1000, 9999);
@@ -42,8 +44,10 @@ public class ServidorRed : NetworkBehaviour
     }
 
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-    public void RPC_IntentarReparar(int codigoIngresado)
+    public void RPC_IntentarReparar(int codigoIngresado, RpcInfo info = default)
     {
+        if (!CanAct(info.Source, RoleType.Admin)) return;
+
         if (EstadoActual == EstadoServidor.Hackeado)
         {
             if (codigoIngresado == CodigoMitigacion)
@@ -58,9 +62,26 @@ public class ServidorRed : NetworkBehaviour
         }
     }
 
+    private bool CanAct(PlayerRef sender, RoleType role)
+    {
+        // Keep the original prototype for other scenes; it cannot bypass the cooperative mission.
+        if (CooperativeIncident.Instance != null) return false;
+        var roles = RoleManager.Instance;
+        return roles != null && roles.IsOnline && roles.GameStarted && roles.GetRole(sender) == role;
+    }
+
     void ActualizarColorVisual()
     {
         if (_renderer == null) return;
+
+        var mission = CooperativeIncident.Instance;
+        if (mission != null && mission.IsOnline)
+        {
+            _renderer.material.color = mission.Stage == IncidentStage.Resolved ? Color.green :
+                mission.Stage >= IncidentStage.Contained ? Color.yellow :
+                mission.Stage >= IncidentStage.Alert ? Color.red : Color.white;
+            return;
+        }
 
         switch (EstadoActual)
         {

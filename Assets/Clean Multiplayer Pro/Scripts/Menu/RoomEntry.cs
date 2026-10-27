@@ -158,8 +158,14 @@ namespace AvocadoShark
 
         public void DestroyEntry()
         {
-            FusionConnection.Instance.OnDestroyRoomEntries -= DestroyEntry;
+            if (fusionConnectionRef != null) fusionConnectionRef.OnDestroyRoomEntries -= DestroyEntry;
+            gameObject.SetActive(false);
             Destroy(gameObject);
+        }
+
+        private void OnDestroy()
+        {
+            if (fusionConnectionRef != null) fusionConnectionRef.OnDestroyRoomEntries -= DestroyEntry;
         }
 
         IEnumerator FlashPlayerNumberText()
@@ -187,13 +193,13 @@ namespace AvocadoShark
 
         public void SetTryingToJoinRoom()
         {
-            FusionConnection.Instance.SetCurrentEntryBeingEdited(this);
-            FusionConnection.Instance.OnDestroyRoomEntries -= DestroyEntry;
+            fusionConnectionRef.SetCurrentEntryBeingEdited(this);
+            fusionConnectionRef.OnDestroyRoomEntries -= DestroyEntry;
         }
 
         public void SetQuitTryingToJoinRoom()
         {
-            FusionConnection.Instance.ResetCurrentEntryBeingEdited(this);
+            fusionConnectionRef.ResetCurrentEntryBeingEdited(this);
         }
     }
 }

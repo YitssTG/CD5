@@ -145,14 +145,7 @@ public class VoteKickManager : NetworkBehaviour,IPlayerLeft
         Action callback = Runner.LocalPlayer == playerRef
             ? () =>
             {
-                Runner.Shutdown();
-                var fusionManager = FindFirstObjectByType<FusionConnection>();
-                if (fusionManager != null)
-                {
-                    Destroy(fusionManager);
-                }
-
-                SceneManager.LoadScene("Menu");
+                if (FusionConnection.Instance != null) FusionConnection.Instance.ReturnToMenu();
             }
             : null;
         StartCoroutine(ShowPopUp($"<color=#D96222>{playerStat.PlayerName} got kicked out</color>", callback));

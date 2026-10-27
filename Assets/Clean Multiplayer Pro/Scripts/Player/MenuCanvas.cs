@@ -22,6 +22,11 @@ public class MenuCanvas : MonoBehaviour
     private void Awake()
     {
         slider.onValueChanged.AddListener(OnSliderValueChange);
+        // La experiencia cooperativa está diseñada para exactamente dos jugadores
+        // (un Pentester y un Administrador).
+        slider.maxValue = 2;
+        slider.minValue = 2;
+        slider.value = 2;
         passwordInputField.interactable = IsPasswordEnabled;
         passwordToggle.isOn = IsPasswordEnabled;
         passwordToggle.onValueChanged.AddListener(TogglePassword);

@@ -13,6 +13,7 @@ using Photon.Voice.Unity;
 using StarterAssets;
 using Fusion.Photon.Realtime;
 using UnityEngine.Serialization;
+using System.Threading.Tasks;
 
 namespace AvocadoShark
 {
@@ -79,12 +80,24 @@ namespace AvocadoShark
         public TMP_Dropdown region_select;
         public Button backButton;
 
+        private bool _operationInProgress;
+        private bool _returningToMenu;
+        private bool _quitting;
+        private Task _returnToMenuTask;
+        private static string _pendingError;
+        private const string MenuScenePath = "Assets/Clean Multiplayer Pro/Scenes/Menu.unity";
+        private const string GameScenePath = "Assets/Clean Multiplayer Pro/Scenes/Game.unity";
+        private const string EnvironmentScenePath = "Assets/Clean Multiplayer Pro/Scenes/Environment 1.unity";
+
         private void Awake()
         {
-            if (Instance == null)
+            if (Instance != null && Instance != this)
             {
-                Instance = this;
+                Destroy(gameObject);
+                return;
             }
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
 
             room_search.onValueChanged.AddListener(OnSearchTextValueChange);
 #if UNITY_2022_3_OR_NEWER
@@ -124,6 +137,92 @@ namespace AvocadoShark
             settings.AppSettings.FixedRegion = region;
         }
 
+        private void Start()
+        {
+            if (Instance != this) return;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            if (!string.IsNullOrEmpty(_pendingError))
+            {
+                popup.ShowPopup(_pendingError);
+                _pendingError = null;
+            }
+        }
+
+        private void Update()
+        {
+            // Scene callbacks can run before Fusion finishes the entire scene queue.
+            if (_returningToMenu || hasEnteredGameScene || Runner == null || !Runner.IsRunning || Runner.IsSceneManagerBusy)
+                return;
+            if (!SceneManager.GetSceneByPath(GameScenePath).isLoaded ||
+                !SceneManager.GetSceneByPath(EnvironmentScenePath).isLoaded)
+                return;
+            hasEnteredGameScene = true;
+            try { SpawnPlayerCharacter(Runner); }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+                ReturnToMenu(exception.Message);
+            }
+        }
+
+        private void OnApplicationQuit() { _quitting = true; }
+
+        private void OnDestroy()
+        {
+            if (room_search != null) room_search.onValueChanged.RemoveListener(OnSearchTextValueChange);
+            if (Runner != null) Runner.RemoveCallbacks(this);
+            if (Instance == this) Instance = null;
+        }
+
+        public async void ReturnToMenu(string error = null)
+        {
+            try { await ReturnToMenuAsync(error); }
+            catch (Exception exception) { Debug.LogException(exception); }
+        }
+
+        public Task ReturnToMenuAsync(string error = null)
+        {
+            if (_returnToMenuTask != null) return _returnToMenuTask;
+            _returningToMenu = true;
+            _pendingError = error;
+            return _returnToMenuTask = CloseSessionAndLoadMenu();
+        }
+
+        private async Task CloseSessionAndLoadMenu()
+        {
+            CancelInvoke();
+            StopAllCoroutines();
+            // Leave the callback stack before asking Fusion to finish shutdown.
+            await Task.Yield();
+            var oldRunner = Runner;
+            if (oldRunner != null)
+            {
+                await oldRunner.Shutdown();
+                if (oldRunner != null)
+                {
+                    oldRunner.RemoveCallbacks(this);
+                    Destroy(oldRunner.gameObject);
+                }
+            }
+            Runner = null;
+            playersInSession.Clear();
+            _roomEntryList.Clear();
+            _sessionList.Clear();
+            CurrentEntryBeingEdited = null;
+            OnDestroyRoomEntries = null;
+            isConnected = false;
+            hasEnteredGameScene = false;
+            if (_quitting || !Application.isPlaying) return;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            Instance = null;
+            Destroy(gameObject);
+            // A fresh scene supplies fresh UI references and a fresh session controller.
+            var load = SceneManager.LoadSceneAsync(MenuScenePath, LoadSceneMode.Single);
+            while (!load.isDone) await Task.Yield();
+        }
+
         public void ChangeRegion(int regionNum)
         {
             string region = null;
@@ -157,27 +256,16 @@ namespace AvocadoShark
 
         public void OnSearchTextValueChange(string value)
         {
-            if (string.IsNullOrEmpty(value) || string.IsNullOrWhiteSpace(value))
-            {
-                foreach (var i in _roomEntryList)
-                {
-                    i.gameObject.SetActive(true);
-                }
-            }
-
+            _roomEntryList.RemoveAll(entry => entry == null);
             foreach (var i in _roomEntryList)
             {
-                if (value != null && i.roomName.text.Contains(value))
-                    i.gameObject.SetActive(true);
-                else
-                {
-                    i.gameObject.SetActive(false);
-                }
+                i.gameObject.SetActive(string.IsNullOrWhiteSpace(value) || i.roomName.text.Contains(value));
             }
         }
 
         public void CreateRoom()
         {
+            if (_operationInProgress || _returningToMenu || IsInvoking(nameof(ContinueCreateRoom))) return;
             PlayerPrefs.SetInt("has_pass", 0);
             loadingScreenScript.gameObject.SetActive(true);
             Invoke(nameof(ContinueCreateRoom), loadingScreenScript.lerpSpeed);
@@ -203,6 +291,9 @@ namespace AvocadoShark
 
             Debug.Log($"Session name is {sessionName}");
 
+            // La experiencia cooperativa es para exactamente dos jugadores.
+            maxPlayers = 2;
+
             Debug.Log($"maxPlayers is {maxPlayers}");
 
             if (menuCanvas.IsPasswordEnabled)
@@ -225,8 +316,11 @@ namespace AvocadoShark
 
         public bool TryGetLocalPlayerComponent<T>(out T component)
         {
+            component = default;
+            if (_returningToMenu || Runner == null || !Runner.IsRunning) return false;
             var localPlayer = Runner.GetPlayerObject(Runner.LocalPlayer);
-            if (localPlayer == null)
+            if (localPlayer == null || !localPlayer.IsValid || !localPlayer.HasStateAuthority ||
+                localPlayer.StateAuthority != Runner.LocalPlayer)
             {
                 component = default;
                 return false;
@@ -237,6 +331,7 @@ namespace AvocadoShark
 
         public void OnSessionListUpdated(NetworkRunner runner, List<SessionInfo> sessionList)
         {
+            if (runner != Runner || _returningToMenu || roomListObject == null) return;
             if (initialRoomListPopulated == false)
             {
                 //StartCoroutine(AutoRefreshRoomList());
@@ -262,12 +357,16 @@ namespace AvocadoShark
             initialRoomListPopulated = true;
             roomListObject.SetActive(true);
 
+            // Keep only the row whose password is being edited, if its room still exists.
+            if (CurrentEntryBeingEdited != null &&
+                !_sessionList.Exists(session => session.Name == CurrentEntryBeingEdited.sessionInfo.Name))
+            {
+                CurrentEntryBeingEdited.DestroyEntry();
+                CurrentEntryBeingEdited = null;
+            }
             OnDestroyRoomEntries?.Invoke();
-
-            //foreach (Transform child in content)
-            //{
-            //    Destroy(child.gameObject);
-            //}
+            _roomEntryList.Clear();
+            if (CurrentEntryBeingEdited != null) _roomEntryList.Add(CurrentEntryBeingEdited);
 
             foreach (SessionInfo session in _sessionList)
             {
@@ -293,6 +392,7 @@ namespace AvocadoShark
             {
                 NoRoomsText.gameObject.SetActive(false);
             }
+            OnSearchTextValueChange(room_search.text);
         }
 
         //public void AddPlayerToBannedList(string name) {
@@ -301,97 +401,89 @@ namespace AvocadoShark
 
         public void ConnectToRunner()
         {
+            if (_operationInProgress || _returningToMenu || Runner != null || IsInvoking(nameof(ContinueConnectToRunner))) return;
             loadingScreenScript.gameObject.SetActive(true);
             Invoke(nameof(ContinueConnectToRunner), loadingScreenScript.lerpSpeed);
         }
-        private void ContinueConnectToRunner()
+        private async void ContinueConnectToRunner()
         {
+            if (_operationInProgress || _returningToMenu) return;
+            _operationInProgress = true;
             _playerName = nameField.text;
             mainObject.SetActive(false);
             characterselectionobject.SetActive(false);
-            SetUpComponents();
-            Runner.JoinSessionLobby(SessionLobby.Shared);
+            try
+            {
+                SetUpComponents();
+                var result = await Runner.JoinSessionLobby(SessionLobby.Shared);
+                if (!result.Ok && !_returningToMenu) ReturnToMenu(result.ShutdownReason.ToString());
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+                if (!_returningToMenu) ReturnToMenu(exception.Message);
+            }
+            finally { _operationInProgress = false; }
         }
         private void SetUpComponents()
         {
+            if (Runner != null) return;
             Runner = Instantiate(runnerPrefab);
+            DontDestroyOnLoad(Runner.gameObject);
+            if (Runner.GetComponent<INetworkSceneManager>() == null)
+                Runner.gameObject.AddComponent<NetworkSceneManagerDefault>();
+            if (Runner.GetComponent<INetworkObjectProvider>() == null)
+                Runner.gameObject.AddComponent<NetworkObjectProviderDefault>();
             _fvc = Runner.GetComponent<FusionVoiceClient>();
             _recorder = Runner.GetComponentInChildren<Recorder>();
             _voiceManager = Runner.GetComponentInChildren<VoiceManager>();
             Runner.AddCallbacks(this);
         }
 
-        public async void JoinRoom(string sessionName, string password = null)
+        public void JoinRoom(string sessionName, string password = null)
         {
-            int buildIndex = -1;
-
-            for (int i = 0; i < SceneManager.sceneCountInBuildSettings; i++)
-            {
-                string scenePath = SceneUtility.GetScenePathByBuildIndex(i);
-                string sceneName = System.IO.Path.GetFileNameWithoutExtension(scenePath);
-
-                if (sceneName == "Game")
-                {
-                    buildIndex = i;
-                    break;
-                }
-            }
-
-            StopCoroutine(AutoRefreshRoomList());
-            if (Runner == null)
-            {
-                SetUpComponents();
-            }
-
-            var result = await Runner.StartGame(new StartGameArgs()
-            {
-                GameMode = GameMode.Shared,
-                SessionName = sessionName,
-                Scene = SceneRef.FromIndex(buildIndex),
-            });
-            if (result.Ok)
-                return;
-            popup.ShowPopup(result.ShutdownReason.ToString());
+            StartSession(sessionName, null, password);
         }
 
-        public async void JoinRoom(string sessionName, int maxPlayers, string password = null)
+        public void JoinRoom(string sessionName, int maxPlayers, string password = null)
         {
-            int buildIndex = -1;
+            StartSession(sessionName, maxPlayers, password);
+        }
 
-            var sessionProperties = new Dictionary<string, SessionProperty> { { "password", password } };
-
-            for (int i = 0; i < SceneManager.sceneCountInBuildSettings; i++)
+        private async void StartSession(string sessionName, int? maxPlayers, string password)
+        {
+            if (_operationInProgress || _returningToMenu || (Runner != null && Runner.IsRunning)) return;
+            _operationInProgress = true;
+            try
             {
-                string scenePath = SceneUtility.GetScenePathByBuildIndex(i);
-                string sceneName = System.IO.Path.GetFileNameWithoutExtension(scenePath);
-
-                if (sceneName == "Game")
-                {
-                    buildIndex = i;
-                    break;
-                }
-            }
-
-            StopCoroutine(AutoRefreshRoomList());
-
-            if (Runner == null)
-            {
+                int gameIndex = SceneUtility.GetBuildIndexByScenePath(GameScenePath);
+                int environmentIndex = SceneUtility.GetBuildIndexByScenePath(EnvironmentScenePath);
+                if (gameIndex < 0 || environmentIndex < 0)
+                    throw new InvalidOperationException("Game y Environment 1 deben estar habilitadas en Build Settings.");
                 SetUpComponents();
+                var scenes = new NetworkSceneInfo();
+                scenes.AddSceneRef(SceneRef.FromIndex(gameIndex), LoadSceneMode.Single);
+                scenes.AddSceneRef(SceneRef.FromIndex(environmentIndex), LoadSceneMode.Additive, activeOnLoad: false);
+                var result = await Runner.StartGame(new StartGameArgs
+                {
+                    GameMode = GameMode.Shared,
+                    SessionName = sessionName,
+                    Scene = scenes,
+                    SceneManager = Runner.GetComponent<INetworkSceneManager>(),
+                    ObjectProvider = Runner.GetComponent<INetworkObjectProvider>(),
+                    PlayerCount = maxPlayers,
+                    SessionProperties = maxPlayers.HasValue
+                        ? new Dictionary<string, SessionProperty> { { "password", password ?? string.Empty } }
+                        : null
+                });
+                if (!result.Ok && !_returningToMenu) ReturnToMenu(result.ShutdownReason.ToString());
             }
-
-            var result = await Runner.StartGame(new StartGameArgs()
+            catch (Exception exception)
             {
-                GameMode = GameMode.Shared,
-                SessionName = sessionName,
-                Scene = SceneRef.FromIndex(buildIndex),
-                SessionProperties = sessionProperties,
-                PlayerCount = maxPlayers
-            });
-            if (result.Ok)
-            {
-                return;
+                Debug.LogException(exception);
+                if (!_returningToMenu) ReturnToMenu(exception.Message);
             }
-            popup.ShowPopup(result.ShutdownReason.ToString());
+            finally { _operationInProgress = false; }
         }
 
         private void SpawnPlayerCharacter(NetworkRunner runner)
@@ -404,6 +496,8 @@ namespace AvocadoShark
                     UnityEngine.Random.Range(-31.48f, -41.22f))
                 : CustomLocation;
             var playerObject = runner.Spawn(playerPrefab,location);
+            runner.SetPlayerObject(runner.LocalPlayer, playerObject.Object);
+            Debug.Log($"[LocalControl] registered local={runner.LocalPlayer} avatar={playerObject.Object.Id} owner={playerObject.Object.StateAuthority}");
             //playerObject.transform.position = location;
             
 
@@ -411,7 +505,6 @@ namespace AvocadoShark
                 playerObject.GetComponent<PlayerWorldUIManager>());
 
 
-            runner.SetPlayerObject(runner.LocalPlayer, playerObject.Object);
         }
 
         #region INetworkCallbacks
@@ -429,7 +522,7 @@ namespace AvocadoShark
 
         public void OnConnectFailed(NetworkRunner runner, NetAddress remoteAddress, NetConnectFailedReason reason)
         {
-            popup.ShowPopup(reason.ToString());
+            if (!_quitting && !_returningToMenu && runner == Runner) ReturnToMenu(reason.ToString());
         }
 
         public void OnConnectRequest(NetworkRunner runner, NetworkRunnerCallbackArgs.ConnectRequest request,
@@ -472,37 +565,19 @@ namespace AvocadoShark
 
         public void OnPlayerJoined(NetworkRunner runner, PlayerRef player)
         {
-            playersInSession.Add(player);
+            if (runner == Runner && !playersInSession.Contains(player)) playersInSession.Add(player);
         }
 
         public void OnPlayerLeft(NetworkRunner runner, PlayerRef player)
         {
+            if (runner != Runner) return;
+            playersInSession.RemoveAll(item => item == player);
+            if (SessionPlayers.instance != null) SessionPlayers.instance.RemovePlayer(player);
         }
         public void OnSceneLoadDone(NetworkRunner runner)
         {
-            if (Instance != null && Instance != this)
-            {
-                Destroy(gameObject);
-            }
-            
-            Debug.Log("Scene Load Done.");
-            if(hasEnteredGameScene)
-                return;
-            hasEnteredGameScene = true;
-            if (Runner.IsSceneAuthority)
-            {
-                var asyncOp = Runner.LoadScene(SceneRef.FromIndex(2), LoadSceneMode.Additive);
-                asyncOp.AddOnCompleted((op)=>
-                {
-                    SpawnPlayerCharacter(Runner);
-                });
-            }
-            else
-            {
-                SpawnPlayerCharacter(Runner);
-            }
-            
-            //SessionPlayers.instance.AddPlayer(runner.LocalPlayer);
+            // Both initial scenes are synchronized by NetworkSceneInfo.
+            // Update spawns once the full queue has completed on this peer.
         }
 
         public void OnSceneLoadStart(NetworkRunner runner)
@@ -511,6 +586,8 @@ namespace AvocadoShark
 
         public void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)
         {
+            if (!_quitting && !_returningToMenu && runner == Runner)
+                ReturnToMenu(shutdownReason == ShutdownReason.Ok ? null : shutdownReason.ToString());
         }
 
         public void OnUserSimulationMessage(NetworkRunner runner, SimulationMessagePtr message)
@@ -531,6 +608,7 @@ namespace AvocadoShark
         }
         public void SetCurrentEntryBeingEdited(RoomEntry roomEntry)
         {
+            if (CurrentEntryBeingEdited == roomEntry) return;
             if (CurrentEntryBeingEdited != null)
             {
                 // If we were previously editing an entry

@@ -171,6 +171,7 @@ namespace StarterAssets
 
         private void LateUpdate()
         {
+            if (Object == null || !Object.IsValid || !HasStateAuthority) return;
             CameraRotation();
         }
 

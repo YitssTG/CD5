@@ -26,6 +26,7 @@ namespace AvocadoShark
 
         private void Update()
         {
+            if (FusionConnection.Instance == null) return;
             RoomsMade.text = "Total Rooms: " + FusionConnection.Instance.nRooms;
             Players_In_Rooms.text = "Players In Rooms: " + FusionConnection.Instance.nPPLOnline;
         }
