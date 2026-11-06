@@ -41,6 +41,14 @@ public class RoleSelectionUI : MonoBehaviour
     {
         if (roleManager == null) roleManager = RoleManager.Instance;
         if (!built) return;
+        var mission = CooperativeIncident.Instance;
+        if (mission != null && mission.IsOnline && mission.Phase != MissionPhase.Waiting)
+        {
+            panelRoot.SetActive(false);
+            hudLabel.gameObject.SetActive(false);
+            ReconcileLocalRole();
+            return;
+        }
 
         if (roleManager == null || !roleManager.IsOnline)
         {

@@ -15,7 +15,227 @@ MonoBehaviour:
   incidentId: SQLI-001
   title: Acceso anomalo al portal de matriculas
   wrongReportPenalty: 10
-  wrongReportDelay: 5
+  wrongReportDelay: 0
   interactionRadius: 4
   evidence: "[09:41:02] Portal de matriculas: solicitud de inicio de sesion.\n[09:41:02] Campo usuario contiene comillas y una condicion logica inesperada.\n[09:41:02] Traza: entrada del formulario concatenada en una consulta SQL.\n[09:41:03] La consulta devuelve varias cuentas; el usuario no tenia una sesion valida.\n[09:41:04] No hay una secuencia masiva de intentos ni correos sospechosos.\n\nEvidencia simulada: identifica que frontera entre datos e instrucciones se ha perdido."
   explanation: "La aplicacion concatenaba datos del usuario con instrucciones SQL. Esto permitia alterar la consulta. Las consultas parametrizadas separan instrucciones y valores: la entrada se trata como datos. Reiniciar o cambiar una clave no elimina esta causa. La contencion limita el impacto, pero no sustituye la reparacion. La verificacion simulo una entrada sospechosa rechazada y un acceso legitimo correcto. El Pentester aporto evidencias y verifico; el Administrador contuvo y reparo. Todo el ejercicio es simulado."
+  serverId: SRV-01
+  analysisSeconds: 5
+  containmentSeconds: 3
+  repairSeconds: 5
+  verificationSeconds: 4
+  tabletWalkMultiplier: 0.65
+  scoring:
+    hintCost: 3
+    accuracyBonus: 5
+    cooperationBonus: 10
+    maxPenalty: 0
+  steps:
+  - stepId: "scan"
+    objectiveType: 0
+    stage: 1
+    authorizedRole: 2
+    successPoints: 5
+    penaltyPoints: 10
+    penaltyDelay: 0
+    objective: "Identifica SRV-01 e inicia el analisis"
+    briefing: "El portal registra accesos sin sesion valida. Analiza el servidor para obtener evidencias."
+    successFeedback: "Completado: Identifica SRV-01 e inicia el analisis"
+    failureFeedback: "La decision no corresponde a las evidencias o al orden requerido. Revisa la explicacion y reintenta."
+    completesIncident: 0
+    hints: []
+    minigame:
+      kind: 0
+      prompt: ""
+      correctFeedback: ""
+      wrongFeedback: ""
+      requiredOrder:
+      options: []
+  - stepId: "evidence"
+    objectiveType: 0
+    stage: 2
+    authorizedRole: 2
+    successPoints: 10
+    penaltyPoints: 10
+    penaltyDelay: 0
+    objective: "Selecciona las evidencias relevantes en el servidor"
+    briefing: "[09:41:02] Portal de matriculas: solicitud de inicio de sesion.\n[09:41:02] Campo usuario contiene comillas y una condicion logica inesperada.\n[09:41:02] Traza de la aplicacion: entrada del formulario concatenada en una consulta SQL.\n[09:41:03] La consulta devuelve varias cuentas; el usuario no tenia una sesion valida.\n[09:41:04] No hay una secuencia masiva de intentos ni correos sospechosos.\n\nEvidencia simulada: identifica que frontera entre datos e instrucciones se ha perdido."
+    successFeedback: "Completado: Selecciona las evidencias relevantes en el servidor"
+    failureFeedback: "La decision no corresponde a las evidencias o al orden requerido. Revisa la explicacion y reintenta."
+    completesIncident: 0
+    hints:
+    - "Distingue lo observado de las explicaciones sin evidencia."
+    - "Busca la frontera perdida entre datos e instrucciones."
+    minigame:
+      kind: 2
+      prompt: "Marca todas las evidencias relevantes"
+      correctFeedback: ""
+      wrongFeedback: ""
+      requiredOrder:
+      options:
+      - id: "concat"
+        label: "Entrada concatenada en SQL"
+        detail: ""
+        isCorrect: 1
+        isDistractor: 0
+      - id: "logic"
+        label: "Cambio de la condicion de consulta"
+        detail: ""
+        isCorrect: 1
+        isDistractor: 0
+      - id: "access"
+        label: "Acceso sin sesion valida"
+        detail: ""
+        isCorrect: 1
+        isDistractor: 0
+      - id: "email"
+        label: "Correo de phishing no observado"
+        detail: ""
+        isCorrect: 0
+        isDistractor: 1
+  - stepId: "ticket"
+    objectiveType: 0
+    stage: 3
+    authorizedRole: 2
+    successPoints: 0
+    penaltyPoints: 10
+    penaltyDelay: 0
+    objective: "Redacta y envia el ticket desde tu tablet"
+    briefing: "Incluye servicio, diagnostico, evidencias, gravedad y recomendacion. El Administrador revisara tu propuesta."
+    successFeedback: "Completado: Redacta y envia el ticket desde tu tablet"
+    failureFeedback: "La decision no corresponde a las evidencias o al orden requerido. Revisa la explicacion y reintenta."
+    completesIncident: 0
+    hints:
+    - "Un acceso no autorizado a cuentas tiene impacto alto."
+    - "La recomendacion debe corregir la construccion de consultas."
+    minigame:
+      kind: 0
+      prompt: ""
+      correctFeedback: ""
+      wrongFeedback: ""
+      requiredOrder:
+      options: []
+  - stepId: "review"
+    objectiveType: 0
+    stage: 4
+    authorizedRole: 1
+    successPoints: 0
+    penaltyPoints: 10
+    penaltyDelay: 0
+    objective: "Introduce el codigo del ticket en tu PC y revisalo"
+    briefing: "Contrasta el diagnostico con las evidencias. Puedes aceptar o solicitar correccion."
+    successFeedback: "Completado: Introduce el codigo del ticket en tu PC y revisalo"
+    failureFeedback: "La decision no corresponde a las evidencias o al orden requerido. Revisa la explicacion y reintenta."
+    completesIncident: 0
+    hints:
+    - "Compara servicio, evidencias y recomendacion antes de aceptar."
+    minigame:
+      kind: 0
+      prompt: ""
+      correctFeedback: ""
+      wrongFeedback: ""
+      requiredOrder:
+      options: []
+  - stepId: "contain"
+    objectiveType: 0
+    stage: 4
+    authorizedRole: 1
+    successPoints: 10
+    penaltyPoints: 10
+    penaltyDelay: 0
+    objective: "Selecciona el servicio afectado y contienelo"
+    briefing: "Aisla temporalmente el acceso al servicio identificado en el reporte. La contencion no elimina la causa."
+    successFeedback: "Completado: Selecciona el servicio afectado y contienelo"
+    failureFeedback: "La decision no corresponde a las evidencias o al orden requerido. Revisa la explicacion y reintenta."
+    completesIncident: 0
+    hints:
+    - "El reporte identifica el portal, no el correo."
+    minigame:
+      kind: 1
+      prompt: ""
+      correctFeedback: ""
+      wrongFeedback: ""
+      requiredOrder:
+      options:
+      - id: "portal"
+        label: "Portal de matriculas"
+        detail: ""
+        isCorrect: 1
+        isDistractor: 0
+      - id: "mail"
+        label: "Servicio de correo"
+        detail: ""
+        isCorrect: 0
+        isDistractor: 1
+  - stepId: "repair"
+    objectiveType: 0
+    stage: 5
+    authorizedRole: 1
+    successPoints: 20
+    penaltyPoints: 10
+    penaltyDelay: 0
+    objective: "Ordena la reparacion del servicio"
+    briefing: "El servicio esta aislado. Ordena las tareas para separar instrucciones y datos antes de desplegar la correccion."
+    successFeedback: "Completado: Ordena la reparacion del servicio"
+    failureFeedback: "La decision no corresponde a las evidencias o al orden requerido. Revisa la explicacion y reintenta."
+    completesIncident: 0
+    hints:
+    - "Primero corrige, despues prueba y finalmente despliega."
+    minigame:
+      kind: 3
+      prompt: "Selecciona en orden (clic de nuevo para retirar)"
+      correctFeedback: ""
+      wrongFeedback: ""
+      requiredOrder: 000000000100000002000000
+      options:
+      - id: "params"
+        label: "Sustituir concatenacion por parametros"
+        detail: ""
+        isCorrect: 1
+        isDistractor: 0
+      - id: "test"
+        label: "Probar entrada y acceso legitimo"
+        detail: ""
+        isCorrect: 1
+        isDistractor: 0
+      - id: "deploy"
+        label: "Desplegar correccion en servicio aislado"
+        detail: ""
+        isCorrect: 1
+        isDistractor: 0
+      - id: "restart"
+        label: "Reiniciar sin corregir la consulta"
+        detail: ""
+        isCorrect: 0
+        isDistractor: 1
+  - stepId: "verify"
+    objectiveType: 0
+    stage: 6
+    authorizedRole: 2
+    successPoints: 10
+    penaltyPoints: 10
+    penaltyDelay: 0
+    objective: "Verifica la reparacion antes de restaurar"
+    briefing: "Pruebas simuladas: la entrada sospechosa se trata como texto y no altera SQL; el acceso legitimo sigue funcionando. Evalua ambos resultados."
+    successFeedback: "Completado: Verifica la reparacion antes de restaurar"
+    failureFeedback: "La decision no corresponde a las evidencias o al orden requerido. Revisa la explicacion y reintenta."
+    completesIncident: 1
+    hints:
+    - "Seguridad y funcionamiento legitimo deben cumplirse juntos."
+    minigame:
+      kind: 1
+      prompt: ""
+      correctFeedback: ""
+      wrongFeedback: ""
+      requiredOrder:
+      options:
+      - id: "both"
+        label: "Ambas pruebas cumplen: restaurar servicio"
+        detail: ""
+        isCorrect: 1
+        isDistractor: 0
+      - id: "one"
+        label: "Basta con que el servidor encienda"
+        detail: ""
+        isCorrect: 0
+        isDistractor: 1

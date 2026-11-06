@@ -11,7 +11,7 @@ namespace StarterAssets
         [SerializeField] private bool isPlayerWritingChat = false;
         private bool localControl;
         private bool gameplayBlocked = true;
-        public bool IsBlocked => !localControl || gameplayBlocked || isPlayerWritingChat;
+        public bool IsBlocked => !localControl || gameplayBlocked || isPlayerWritingChat || RoleTerminalUI.IsTyping;
 
         public void SetLocalControl(bool value) { localControl = value; ClearInput(); }
         public void SetGameplayBlocked(bool value)
@@ -68,7 +68,7 @@ namespace StarterAssets
         }
         private void EnablePushToTalk(InputAction.CallbackContext context)
         {
-            if (IsBlocked) return;
+            if (!localControl || RoleTerminalUI.IsTyping || isPlayerWritingChat) return;
             pushToTalk = true;
         }
         private void DisablePushToTalk(InputAction.CallbackContext context)

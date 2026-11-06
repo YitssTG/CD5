@@ -1,329 +1,412 @@
+using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using AvocadoShark;
 using StarterAssets;
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
-#endif
 
-// Presentation only: all decisions are validated by CooperativeIncident's state authority.
+// Local tablet/PC view. No UI callback can mutate mission state directly.
 public class RoleTerminalUI : MonoBehaviour
 {
     [SerializeField] private RoleManager roleManager;
     [SerializeField] private IncidentUISkin skin;
-    private GameObject panelRoot;
-    private TMP_Text titleLabel, bodyLabel, hintLabel;
-    private Button primaryButton, secondaryButton, hintButton;
-    private readonly Button[] choices = new Button[4];
-    private readonly MinigameSelection selection = new MinigameSelection();
-    private MinigameDefinition currentMinigame;
-    private int shownRevision = -1;
-    private bool built, open;
     private static RoleTerminalUI instance;
-    private static IncidentUISkin defaultSkin;
-    public static bool IsOpen { get; private set; }
-    private IncidentUISkin Skin => skin != null ? skin : (defaultSkin != null ? defaultSkin : (defaultSkin = IncidentUISkin.CreateDefault()));
-    private void Start() { instance = this; Build(); }
+    public static bool TabletVisible => instance != null && instance.visible && !instance.pc;
+    public static bool TabletInteractive => TabletVisible && instance.pointer;
+    public static bool IsOpen => instance != null && instance.visible && instance.pointer;
+    public static bool IsTyping => EventSystem.current != null && EventSystem.current.currentSelectedGameObject != null &&
+        EventSystem.current.currentSelectedGameObject.TryGetComponent<TMP_InputField>(out var field) && field.isFocused;
+    private GameObject panel, form, bodyViewport;
+    private GameObject hudPanel;
+    private CanvasGroup gameCanvasGroup;
+    private bool gameCanvasHidden;
+    private float savedCanvasAlpha;
+    private bool savedCanvasInteractable, savedCanvasRaycasts;
+    private RectTransform panelRect;
+    private Transform overlayRoot;
+    private bool showForm, showIdentifier;
+    private readonly System.Collections.Generic.HashSet<GameObject> visibleControls = new System.Collections.Generic.HashSet<GameObject>();
+    private CanvasGroup group;
+    private TMP_Text title, body, hud, toast, error, progressLabel;
+    private TMP_Text controls;
+    private Image progress;
+    private TMP_InputField identifier, comment;
+    private Button primary, secondary, hint;
+    private Button[] options = new Button[4], fields = new Button[4], evidence = new Button[4];
+    private Button[] tabs = new Button[4];
+    private int displayedPage = -1;
+    private MinigameSelection selection = new MinigameSelection();
+    private int page, revision = -1, currentIncident = -1, step = -1, diagnosis = -1, severity = -1, recommendation = -1, system = -1, evidenceMask;
+    private bool visible, pointer, pc;
+    private float blend, toastUntil;
+    private int tutorialPage;
+    private CooperativeIncident subscribed;
+    private MissionPresentationConfig config;
+    private IncidentUISkin currentSkin;
+    private AudioSource sound;
+    private Action primaryAction, secondaryAction;
+    private string localNotice;
+    private static readonly string[] evidenceLabels = { "Entrada concatenada en SQL", "Condicion de consulta alterada", "Acceso sin sesion valida", "Correo de phishing no observado" };
 
+    private void Start()
+    {
+        instance = this; config = MissionPresentationConfig.Load();
+        currentSkin = skin != null ? skin : config.pentesterSkin != null ? config.pentesterSkin : IncidentUISkin.CreateDefault();
+        Build(); sound = gameObject.AddComponent<AudioSource>(); sound.playOnAwake = false; sound.spatialBlend = 0;
+        gameObject.AddComponent<MissionWorldPresentation>();
+    }
+    private RoleType MyRole => roleManager != null && roleManager.IsOnline ? roleManager.LocalRole : RoleType.SinAsignar;
+    private CooperativeIncident Mission => CooperativeIncident.Instance;
     public static void OpenLocalTerminal()
     {
-        if (instance != null && instance.CanUse(out _, out _)) instance.SetOpen(true);
+        if (instance == null || instance.Mission == null || !instance.Mission.IsOnline || IsTyping || CyberDefense.UI.HeatSessionUI.IsPaused) return;
+        if (instance.Mission.IsNear(instance.Mission.Runner.LocalPlayer, instance.MyRole, out _))
+        { instance.pc = true; instance.page = instance.Mission.Phase == MissionPhase.Tutorial ? 3 : instance.MyRole == RoleType.Admin ? 1 : 0; instance.Open(true); }
     }
-
-    private bool CanUse(out CooperativeIncident mission, out RoleType role)
+    public static bool ConsumeEscape()
     {
-        mission = CooperativeIncident.Instance;
-        role = RoleType.SinAsignar;
-        if (roleManager == null) roleManager = RoleManager.Instance;
-        if (roleManager == null || !roleManager.IsOnline || mission == null || !mission.IsOnline ||
-            !mission.TeamReady || CyberDefense.UI.HeatSessionUI.IsPaused) return false;
-        role = roleManager.LocalRole;
-        return mission.IsNear(roleManager.LocalPlayerRef, role, out _);
+        if (IsTyping)
+        {
+            var selected = EventSystem.current.currentSelectedGameObject.GetComponent<TMP_InputField>();
+            selected.DeactivateInputField(); EventSystem.current.SetSelectedGameObject(null); return true;
+        }
+        if (instance == null || !instance.visible) return false;
+        if (instance.pointer && !instance.pc) instance.pointer = false; else instance.Open(false);
+        CyberDefense.UI.HeatSessionUI.RefreshGameplayInput(); return true;
     }
-
+    private void Open(bool value)
+    {
+        visible = value; pointer = value;
+        if (!value) { pc = false; if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null); }
+        if (value) { localNotice = null; if (config.click != null) sound.PlayOneShot(config.click, .3f); }
+        PublishTablet(); CyberDefense.UI.HeatSessionUI.RefreshGameplayInput();
+    }
+    private void PublishTablet()
+    {
+        if (FusionConnection.Instance != null && FusionConnection.Instance.TryGetLocalPlayerComponent(out PlayerRole p)) p.TabletRaised = visible && !pc;
+    }
+    private void OnDisable() { if (panel != null) Open(false); SetGameCanvasHidden(false); }
+    private void OnDestroy()
+    {
+        SetGameCanvasHidden(false);
+        if (subscribed != null) subscribed.EventPresented -= OnEvent;
+        if (panel != null) Destroy(panel);
+        if (instance == this) instance = null;
+    }
+    private void OnEvent(MissionRecord record)
+    {
+        toast.text = record.Detail.ToString(); toastUntil = Time.unscaledTime + 5;
+        if (config.notification != null) sound.PlayOneShot(config.notification, .3f);
+    }
     private void Update()
     {
-        if (!built) return;
-        bool usable = CanUse(out var mission, out var role);
-        if (!usable) SetOpen(false);
-        bool active = mission != null && mission.IsOnline && mission.Definition != null &&
-            roleManager != null && roleManager.IsOnline && roleManager.GameStarted;
-        hintLabel.gameObject.SetActive(active && !open);
-        if (active)
+        if (panel == null) return;
+        if (roleManager == null) roleManager = RoleManager.Instance;
+        var m = Mission;
+        if (m == null || !m.IsOnline || MyRole == RoleType.SinAsignar) { Open(false); hud.text = "Conectando con el equipo..."; Animate(); return; }
+        if (subscribed != m)
+        { if (subscribed != null) subscribed.EventPresented -= OnEvent; subscribed = m; subscribed.EventPresented += OnEvent; }
+        if (currentIncident != m.IncidentNumber)
+        { currentIncident = m.IncidentNumber; page = 3; tutorialPage = 0; evidenceMask = 0; diagnosis = severity = recommendation = system = -1; comment.text = ""; identifier.text = ""; localNotice = null; }
+        if (step != m.CurrentStep) { step = m.CurrentStep; selection.Clear(); }
+        revision = m.Revision;
+        bool paused = CyberDefense.UI.HeatSessionUI.IsPaused;
+        if (!paused && !IsTyping && Keyboard.current != null)
         {
-            mission.IsNear(roleManager.LocalPlayerRef, roleManager.LocalRole, out float distance);
-            string station = roleManager.LocalRole == RoleType.Pentester ? "servidor de investigacion" : "consola de administracion";
-            string objective = mission.TryGetStep(out var step) ? step.objective : StageName(mission.Stage);
-            hintLabel.text = $"ALERTA {mission.Definition.incidentId}/{mission.IncidentNumber} | {objective}\n" +
-                (float.IsInfinity(distance) ? "No se encontro la terminal en este escenario." :
-                $"Acercate al {station}: {distance:0.0} m. " + (usable ? "E / TAB: abrir" : ""));
+            if (Keyboard.current.tabKey.wasPressedThisFrame) { pc = false; if (!visible) { Open(true); } else Open(false); }
+            if (visible && !pc && Keyboard.current.f1Key.wasPressedThisFrame) { pointer = !pointer; if (!pointer && EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null); }
         }
-        if (usable)
+        if (!paused && (!visible || !pointer) && !IsTyping && FusionConnection.Instance != null &&
+            FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs input) && input.interact)
+        { input.interact = false; OpenLocalTerminal(); }
+        if (pc && !m.IsNear(m.Runner.LocalPlayer, MyRole, out _)) { Open(false); localNotice = "Te alejaste de la estacion."; }
+        if (m.Finished && !visible) { pc = false; page = 2; Open(true); }
+        PublishTablet(); Animate();
+        var nextSkin = MyRole == RoleType.Admin ? config.adminSkin : config.pentesterSkin;
+        if (nextSkin != null && nextSkin != currentSkin)
         {
-#if ENABLE_INPUT_SYSTEM
-            if (Keyboard.current != null && Keyboard.current.tabKey.wasPressedThisFrame) SetOpen(!open);
-            if (open && Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame) SetOpen(false);
-#endif
-            if (!open && FusionConnection.Instance != null &&
-                FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs input) && input.interact)
-            { input.interact = false; SetOpen(true); }
+            currentSkin = nextSkin; panel.GetComponent<Image>().color = currentSkin.panelBackground;
+            title.color = progress.color = currentSkin.titleColor;
+            foreach (var b in panel.GetComponentsInChildren<Button>(true)) UIFactory.SetButtonColor(b, currentSkin.buttonPrimary);
         }
-        if (open) RefreshContent();
+        string objective = m.TryGetStep(out var active) ? active.objective : "Mision resuelta";
+        string clock = TimeSpan.FromSeconds(m.Elapsed).ToString(@"mm\:ss");
+        m.IsNear(m.Runner.LocalPlayer, MyRole, out float distance);
+        string location = float.IsInfinity(distance) ? "Estacion no disponible" : $"{(MyRole == RoleType.Pentester ? m.Definition.serverId : "PC ADMIN")} a {distance:0.0} m";
+        hud.text = $"{(MyRole == RoleType.Admin ? "ADMINISTRADOR" : "PENTESTER")}  ·  {clock}  ·  {m.NetScore} pts\n" +
+            (m.Phase == MissionPhase.Tutorial ? "Explora. Abre la tablet para comenzar." : objective);
+        int unread = ChatSystem.Instance != null ? ChatSystem.Instance.Unread : 0;
+        controls.text = "TAB Tablet   ·   F2 Chat" + (unread > 0 ? $" ({unread})" : "") + "   ·   F3 Equipo   ·   ESC Menu" +
+            (distance <= m.Definition.interactionRadius ? "\nE · Interactuar con tu estacion" : "");
+        if (FusionConnection.Instance != null && FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs voiceInput) && voiceInput.pushToTalk) hud.text += "   |   MIC ACTIVO";
+        toast.gameObject.SetActive(!visible && Time.unscaledTime < toastUntil);
+        if (visible) Refresh();
+        if (m.Phase != MissionPhase.Waiting) MissionExitReport.Capture(m);
     }
-
-    private void SetOpen(bool value)
+    private void Animate()
     {
-        if (open == value) return;
-        open = IsOpen = value;
-        panelRoot.SetActive(value);
-        if (value) { selection.Clear(); currentMinigame = null; shownRevision = -1; RefreshContent(); }
-        CyberDefense.UI.HeatSessionUI.RefreshGameplayInput();
+        Canvas tablet = !pc ? TabletPresentation.LocalScreen : null;
+        Transform destination = tablet != null ? tablet.transform : overlayRoot;
+        if (panelRect.parent != destination)
+        {
+            panelRect.SetParent(destination, false);
+            panelRect.localRotation = Quaternion.identity; panelRect.localScale = Vector3.one;
+        }
+        blend = Mathf.MoveTowards(blend, visible ? 1 : 0, Time.unscaledDeltaTime / Mathf.Max(.1f, config.transitionSeconds));
+        SetGameCanvasHidden(visible || blend > .001f);
+        if (hudPanel != null) hudPanel.SetActive(!visible && blend <= .001f && !CyberDefense.UI.HeatSessionUI.IsPaused);
+        if (controls != null) controls.gameObject.SetActive(!visible && blend <= .001f && !CyberDefense.UI.HeatSessionUI.IsPaused);
+        if (toast != null && visible) toast.gameObject.SetActive(false);
+        panel.SetActive(blend > .001f); group.alpha = blend;
+        group.interactable = group.blocksRaycasts = visible && pointer && !CyberDefense.UI.HeatSessionUI.IsPaused;
+        if (tablet != null)
+        {
+            tablet.worldCamera = Camera.main;
+            panelRect.anchorMin = Vector2.zero; panelRect.anchorMax = Vector2.one;
+            panelRect.offsetMin = panelRect.offsetMax = Vector2.zero;
+            return;
+        }
+        Vector2 min = pointer || pc ? new Vector2(.13f,.12f) : new Vector2(.50f,.03f);
+        Vector2 max = pointer || pc ? new Vector2(.87f,.88f) : new Vector2(.98f,.59f);
+        float smooth = 1-Mathf.Exp(-14*Time.unscaledDeltaTime);
+        panelRect.anchorMin = Vector2.Lerp(panelRect.anchorMin, min + Vector2.down*(1-blend), smooth);
+        panelRect.anchorMax = Vector2.Lerp(panelRect.anchorMax, max + Vector2.down*(1-blend), smooth);
+        panelRect.offsetMin = panelRect.offsetMax = Vector2.zero;
     }
-    private void OnDisable() { if (built) SetOpen(false); }
-    private void OnDestroy() { if (instance == this) { instance = null; IsOpen = false; } }
-
-    private static string StageName(IncidentStage stage)
+    private void Refresh()
     {
-        switch(stage)
+        var m = Mission;
+        title.text = (pc ? "ESTACION / " : "TABLET / ") + (MyRole == RoleType.Admin ? "ADMINISTRACION" : "INVESTIGACION") + $"  •  {(m.IsPhishing ? "PHISHING" : m.Definition.incidentId)}";
+        showForm = showIdentifier = false;
+        visibleControls.Clear();
+        primaryAction = secondaryAction = null;
+        float remaining = m.RetryAfter.RemainingTime(m.Runner) ?? 0;
+        error.text = localNotice ?? m.LocalError ?? "";
+        if (remaining > 0) error.text += $"\nReintento en {Mathf.CeilToInt(remaining)} s.";
+        progress.transform.parent.gameObject.SetActive(m.Operating);
+        progress.rectTransform.anchorMax = new Vector2(m.Progress,1);
+        progressLabel.text = m.Operating ? $"Operacion simulada {m.Progress:P0} • permanece junto a tu estacion" : "";
+        if (page == 3 && !m.Finished) Tutorial(m);
+        else if (page == 2 || m.Finished) History(m);
+        else if (page == 1) Tickets(m);
+        else Overview(m);
+        // Apply visibility once. Disabling and re-enabling a TMP input every frame
+        // deactivates editing and clears EventSystem focus on every keystroke.
+        SetVisible(form, showForm); SetVisible(bodyViewport, !showForm);
+        SetVisible(identifier.gameObject, showIdentifier);
+        bool canAct = !m.Operating && remaining <= 0;
+        if (m.Phase == MissionPhase.Active) { primary.interactable &= canAct; secondary.interactable &= canAct; }
+        if (m.Phase == MissionPhase.Active && m.TryGetStep(out var stepData) && stepData.authorizedRole == MyRole && stepData.hints != null && stepData.hints.Length > 0)
+        { visibleControls.Add(hint.gameObject); hint.interactable = canAct; Label(hint, $"Pista (-{m.HintCost} pts)");
+            for(int i=0;i<stepData.hints.Length && i<30;i++) if(m.IsHintRevealed(i))
+            { if(form.activeSelf) error.text += "\nPISTA: " + stepData.hints[i]; else body.text += "\nPISTA: " + stepData.hints[i]; } }
+        foreach (var b in options) SetVisible(b.gameObject, visibleControls.Contains(b.gameObject));
+        foreach (var b in new[] { primary, secondary, hint }) SetVisible(b.gameObject, visibleControls.Contains(b.gameObject));
+        bool hasOptions = false;
+        foreach (var b in options) hasOptions |= b.gameObject.activeSelf;
+        var viewport = bodyViewport.GetComponent<RectTransform>();
+        viewport.anchorMax = new Vector2(hasOptions ? .62f : .96f, .83f);
+        for (int i = 0; i < tabs.Length; i++)
+            UIFactory.SetButtonColor(tabs[i], i == page ? currentSkin.titleColor * .65f : currentSkin.buttonPrimary);
+        if (displayedPage != page)
         {
-            case IncidentStage.Alert: return "Investigar alerta";
-            case IncidentStage.Investigating: return "Analizar evidencias";
-            case IncidentStage.Diagnosed: return "Enviar reporte";
-            case IncidentStage.Reported: return "Reporte recibido: contener servicio";
-            case IncidentStage.Contained: return "Servicio contenido: elegir reparacion";
-            case IncidentStage.Verification: return "Reparacion aplicada: Pentester debe verificar";
-            case IncidentStage.Resolved: return "Incidente resuelto";
-            default: return "Esperando al equipo";
+            bodyViewport.GetComponent<ScrollRect>().verticalNormalizedPosition = 1;
+            displayedPage = page;
         }
     }
-
-    private void RefreshContent()
+    private void Tutorial(CooperativeIncident m)
     {
-        var m = CooperativeIncident.Instance;
-        if (m == null || !m.IsOnline || m.Definition == null) return;
-        if (shownRevision != m.Revision) { shownRevision = m.Revision; selection.Clear(); currentMinigame = null; }
-
-        bool pentester = roleManager.LocalRole == RoleType.Pentester;
-        var def = m.Definition;
-        titleLabel.text = (pentester ? "INVESTIGACION" : "ADMINISTRACION") + $" | {def.incidentId}/{m.IncidentNumber}";
-
-        string text = def.title + "\n";
-        text += StageName(m.Stage) + $" | Puntos: {m.Score} | Penalizacion: {m.Penalty}";
-        if (m.StepCount > 0 && m.Stage != IncidentStage.Resolved && m.Stage != IncidentStage.Waiting)
-            text += $" | Paso {m.CurrentStep + 1}/{m.StepCount}";
-        text += "\n";
-
-        bool hasStep = m.TryGetStep(out var step);
-        bool authorized = hasStep && roleManager.LocalRole == step.authorizedRole;
-
-        if (m.Stage == IncidentStage.Waiting)
-            text += "\nEsperando a que el equipo este listo...";
-        else if (m.Stage == IncidentStage.Resolved)
-            text += $"\nRESULTADO: {m.Score} puntos a favor, {m.Penalty} de penalizacion, {m.WrongAttempts} fallo(s).\n\n" + def.explanation;
-        else if (hasStep)
+        string[] pages = m.IsPhishing ? new[] {
+            "SEGUNDO INCIDENTE: PHISHING\nEste ejercicio es simulado. No abras enlaces reales ni introduzcas contrasenas.",
+            "PENTESTER / ATACANTE AUTORIZADO\nAnaliza remitente, urgencia y dominio. Comunica al defensor un diagnostico basado en lo observado.",
+            "DEFENSOR\nContiene el riesgo, revoca sesiones y recupera el acceso por un canal confiable. El pentester comprueba la respuesta." }
+            : MyRole == RoleType.Pentester ? new[] {
+            "EXPLORACION LIBRE\nWASD: caminar. Raton: mirar. Espacio: saltar. Shift: correr sin tablet.\nTAB saca/guarda tablet. Con ella puedes caminar mas despacio. F1 activa/desactiva el cursor. Al escribir se bloquea movimiento. ESC vuelve un nivel.",
+            "INVESTIGACION\nBusca la etiqueta SRV-01. Introduce ese ID en la tablet cerca del servidor y analiza. E abre la estacion. Selecciona las evidencias de la consulta y el acceso anomalo.",
+            "COOPERACION\nRedacta el ticket en tu tablet: servicio, diagnostico, evidencias, gravedad y recomendacion. El Administrador lo revisa. Puedes corregirlo si lo devuelve. Tu verificas la reparacion final. No puedes reparar." }
+            : new[] {
+            "EXPLORACION LIBRE\nWASD y raton para explorar. TAB tablet, F1 cursor y ESC volver. E abre tu PC al acercarte. El chat y la voz siguen disponibles. El incidente aun no consume tiempo de mision.",
+            "REVISION\nTu tablet recibe un resumen del ticket. Introduce su codigo en la PC ADMIN para abrir el informe completo. Contrasta las evidencias; acepta o solicita una correccion.",
+            "RESPUESTA\nCon reporte aceptado, identifica el servicio, contienelo y ordena la reparacion. El Pentester debe verificar antes de restaurar. Las decisiones incorrectas restan puntos. El reloj no se pausa al abrir interfaces." };
+        body.text = $"TUTORIAL {tutorialPage+1}/{pages.Length}\n\n{pages[tutorialPage]}\n\n" +
+            $"Preparados: Pentester {(m.PentesterReady ? "SI" : "NO")} / Administrador {(m.AdminReady ? "SI" : "NO")}";
+        if (m.Phase != MissionPhase.Tutorial) { body.text += "\nEl tutorial esta disponible como referencia."; return; }
+        bool ready = MyRole == RoleType.Pentester ? m.PentesterReady : m.AdminReady;
+        if (ready) { body.text += "\nEsperando confirmacion del companero. Puedes guardar la tablet y explorar."; return; }
+        if (tutorialPage < 2) Primary("Siguiente", () => tutorialPage++);
+        else Primary("Tutorial completado: estoy preparado", () => m.ConfirmTutorial(false));
+        Secondary("Omitir tutorial y confirmar preparado", () => m.ConfirmTutorial(true));
+    }
+    private void Overview(CooperativeIncident m)
+    {
+        if (m.Phase == MissionPhase.Tutorial) { body.text = "Explora antes de iniciar. Abre la pestana TUTORIAL y confirma preparado cuando termines."; return; }
+        if (!m.TryGetStep(out var stepData)) { body.text = "Esperando al equipo..."; return; }
+        bool authorized = MyRole == stepData.authorizedRole;
+        body.text = $"PASO {m.CurrentStep+1}/{m.StepCount}\n{stepData.objective}\n\n";
+        if (!authorized) { body.text += $"Tu companero ({stepData.authorizedRole}) esta trabajando en este paso.\nPuedes consultar tu tablet y comunicarte por chat/voz."; return; }
+        if (!m.IsPhishing && (m.CurrentStep == 2 || m.CurrentStep == 3)) { body.text += "Continua desde la pestana TICKETS."; Primary("Abrir tickets", () => page = 1); return; }
+        if (!m.IsPhishing && MyRole == RoleType.Pentester && !m.ServerIdentified)
         {
-            text += $"\nOBJETIVO: {step.objective}\n";
-            if (authorized)
-            {
-                if (!string.IsNullOrEmpty(step.briefing)) text += "\n" + step.briefing + "\n";
-                if (step.HasMinigame && !string.IsNullOrEmpty(step.minigame.prompt)) text += "\n" + step.minigame.prompt + "\n";
-            }
-            else
-                text += $"\nEsperando a que {(step.authorizedRole == RoleType.Pentester ? "el Pentester" : "el Administrador")} complete: {step.objective}\n";
+            body.text += "Introduce el ID que aparece en la etiqueta del servidor. La identificacion y el analisis requieren proximidad.\nNo hay penalizacion por escribir mal el ID.";
+            showIdentifier = true; Placeholder(identifier, "ID del servidor, por ejemplo SRV-01");
+            Primary("Conectar al servidor", () => m.Identify(identifier.text)); return;
         }
-
-        string feedback = FeedbackText(m, out _);
-        if (!string.IsNullOrEmpty(feedback)) text += "\n" + feedback;
-
-        if (hasStep && step.hints != null)
-            for (int i = 0; i < step.hints.Length; i++)
-                if (m.IsHintRevealed(i)) text += $"\nPISTA {i + 1}: {step.hints[i]}";
-
-        if (hasStep && authorized && step.HasMinigame && step.minigame.IsSequence && selection.SequenceLength > 0)
-            text += "\nSECUENCIA ACTUAL: " + SequenceText(step.minigame);
-
-        float delay = m.RetryAfter.RemainingTime(m.Runner) ?? 0;
-        if (delay > 0) text += $"\nReintento disponible en {Mathf.CeilToInt(delay)} s.";
-        if (!string.IsNullOrEmpty(m.LocalError)) text += "\n" + m.LocalError;
-        bodyLabel.text = text;
-        bodyLabel.color = m.Feedback == IncidentFeedback.StepFailed || m.Feedback == IncidentFeedback.NotAllowed
-            ? Skin.errorColor
-            : m.Feedback == IncidentFeedback.StepComplete ? Skin.successColor : Skin.bodyColor;
-
-        foreach (var b in choices) b.gameObject.SetActive(false);
-        primaryButton.gameObject.SetActive(false);
-        if (hintButton != null)
+        if (!m.IsPhishing && m.CurrentStep == 1 && !pc) { body.text += "Analisis listo. Acercate al servidor y pulsa E para abrir sus registros en la estacion."; return; }
+        body.text += stepData.briefing;
+        if (stepData.HasMinigame)
         {
-            int remaining = hasStep && step.hints != null ? step.hints.Length - CountRevealed(m, step) : 0;
-            hintButton.gameObject.SetActive(hasStep && authorized && remaining > 0 &&
-                m.Stage != IncidentStage.Resolved && m.Stage != IncidentStage.Waiting);
-            if (hintButton.gameObject.activeSelf)
-                SetButtonLabel(hintButton, $"Pista (-{m.HintCost})");
+            body.text += "\n\n" + stepData.minigame.prompt;
+            for (int i = 0; i < options.Length && i < stepData.minigame.options.Length; i++)
+            {
+                int index = i; var def = stepData.minigame; var b = options[i]; visibleControls.Add(b.gameObject);
+                string prefix = def.IsSequence && selection.SequencePosition(i)>0 ? selection.SequencePosition(i)+". " : selection.IsPicked(i) ? "[X] " : "[ ] ";
+                Label(b, prefix + def.options[i].label); b.onClick.RemoveAllListeners(); b.onClick.AddListener(() => selection.Pick(def,index));
+            }
+            Primary("Confirmar decision", () => m.Submit(selection.ChoiceValue(stepData.minigame), selection.MaskValue(stepData.minigame)), selection.CanConfirm(stepData.minigame));
         }
-
-        if (hasStep && authorized && m.Stage != IncidentStage.Resolved && m.Stage != IncidentStage.Waiting)
+        else Primary("Iniciar analisis", () => m.Submit(-1));
+        if (MyRole == RoleType.Admin && !pc) { primary.interactable = false; body.text += "\n\nLas operaciones administrativas se realizan en tu PC (E)."; }
+        if (!m.IsNear(m.Runner.LocalPlayer, MyRole, out _)) { primary.interactable = false; body.text += "\n\nAcercate a tu estacion para ejecutar esta accion."; }
+    }
+    private void Tickets(CooperativeIncident m)
+    {
+        if (m.IsPhishing) { body.text = "En este ejercicio el reporte se comunica mediante la decision de la pestana OPERACIONES."; return; }
+        if (m.Phase != MissionPhase.Active) { body.text = "Los tickets se habilitan durante el incidente."; return; }
+        if (MyRole == RoleType.Pentester && m.CurrentStep == 2)
         {
-            if (step.HasMinigame && step.minigame.HasOptions)
+            showForm = true;
+            Label(fields[0], "Diagnostico: " + (diagnosis < 0 ? "elige una opcion" : TicketRules.DiagnosisName(diagnosis)));
+            Label(fields[1], "Gravedad: " + (severity < 0 ? "elige una opcion" : TicketRules.SeverityName(severity)));
+            Label(fields[2], "Sugerencia: " + (recommendation < 0 ? "elige una opcion" : TicketRules.RecommendationName(recommendation)));
+            Label(fields[3], "Servicio: " + (system < 0 ? "elige una opcion" : system == 0 ? "Portal de matriculas" : "Correo"));
+            for(int i=0;i<4;i++) Label(evidence[i], ((evidenceMask & 1<<i)!=0 ? "[X] " : "[ ] ")+evidenceLabels[i]);
+            Primary("Enviar ticket", () => m.SendTicket(diagnosis,evidenceMask,severity,recommendation,system,comment.text), TicketRules.IsValid(diagnosis,evidenceMask,severity,recommendation,system));
+            if(m.TicketState == TicketStatus.Returned) error.text = "Ticket devuelto: corrige sus campos y vuelve a enviarlo.";
+            return;
+        }
+        if (m.Ticket.Version == 0) { body.text = "No hay tickets enviados. El Pentester debe analizar las evidencias y redactar el reporte."; return; }
+        var t = m.Ticket; string code = TicketRules.Code(m.IncidentNumber,t.Version);
+        body.text = $"TICKET {code}\nServidor: {m.Definition.serverId}\nGravedad indicada: {TicketRules.SeverityName(t.Severity)}\nEstado: {TicketStateName(m.TicketState)}\n";
+        if (MyRole == RoleType.Admin && !pc)
+        { body.text += "\nIntroduce este codigo en PC ADMIN para consultar el analisis completo.\nE cerca de la estacion abre la PC."; return; }
+        if (MyRole == RoleType.Admin && m.TicketUnlockedVersion != t.Version)
+        {
+            showIdentifier = true; Placeholder(identifier, "Codigo del ticket");
+            Primary("Abrir reporte completo", () => m.UnlockTicket(identifier.text)); return;
+        }
+        body.text += $"\nDiagnostico: {TicketRules.DiagnosisName(t.Diagnosis)}\nServicio: {(t.System==0 ? "Portal de matriculas" : "Correo")}\n" +
+            $"Sugerencia: {TicketRules.RecommendationName(t.Recommendation)}\nComentario: {t.Comment}\n\nEvidencias marcadas:\n";
+        for(int i=0;i<4;i++) if((t.EvidenceMask & 1<<i)!=0) body.text += "• " + evidenceLabels[i]+"\n";
+        body.text += "\nREGISTROS ADJUNTOS\n" + m.Definition.evidence;
+        if(MyRole == RoleType.Admin && m.CurrentStep==3 && m.TicketState==TicketStatus.Submitted)
+        { Primary("Aceptar reporte", () => m.ReviewTicket(true)); Secondary("Solicitar correccion", () => m.ReviewTicket(false)); }
+        else if(MyRole == RoleType.Admin && m.TicketState==TicketStatus.Accepted) Primary("Abrir operaciones",()=>page=0);
+    }
+    private void History(CooperativeIncident m)
+    {
+        body.text = (m.Finished ? m.Summary() : $"Tiempo de mision: {TimeSpan.FromSeconds(m.Elapsed):mm\\:ss}\nPuntos: {m.NetScore}\n") + "\n\nCRONOLOGIA\n" + m.Journal();
+        if (m.Finished)
+        {
+            Primary("Volver al menu", () => { MissionExitReport.Dismiss(); FusionConnection.Instance.ReturnToMenu(); });
+            if (m.Phase == MissionPhase.Complete && m.TeamReady)
             {
-                currentMinigame = step.minigame;
-                Options(step.minigame, selection);
-                Action("Confirmar", () =>
-                {
-                    var mg = currentMinigame;
-                    if (mg == null) return;
-                    CooperativeIncident.Instance.Submit(selection.ChoiceValue(mg), selection.MaskValue(mg));
-                }, selection.CanConfirm(step.minigame));
+                Secondary("Repetir (ambos deben confirmar)", () => m.RequestReplay(false));
+                visibleControls.Add(options[0].gameObject); Label(options[0], "Intercambiar roles y repetir"); options[0].onClick.RemoveAllListeners(); options[0].onClick.AddListener(()=>m.RequestReplay(true));
+                if (!m.IsPhishing) { visibleControls.Add(options[1].gameObject); Label(options[1], "Continuar a phishing (ambos)"); options[1].onClick.RemoveAllListeners(); options[1].onClick.AddListener(()=>m.RequestPhishing()); }
+                body.text += $"\nVotos: Admin {m.AdminReplay} / Pentester {m.PentesterReplay} (1 repetir, 2 intercambiar).";
             }
-            else
-            {
-                currentMinigame = null;
-                Action("Continuar", () => CooperativeIncident.Instance.Submit(-1, 0), true);
-            }
-            primaryButton.interactable &= delay <= 0 && m.TeamReady;
+        }
+    }
+    private void Primary(string label, Action action, bool enabled=true) { visibleControls.Add(primary.gameObject); Label(primary,label); primary.interactable=enabled; primaryAction=action; }
+    private void Secondary(string label, Action action) { visibleControls.Add(secondary.gameObject); Label(secondary,label); secondary.interactable=true; secondaryAction=action; }
+    private static void Label(Button b,string text) { b.GetComponentInChildren<TMP_Text>().text=text; }
+    private static string PhaseName(MissionPhase p) => p == MissionPhase.Active ? "MISION ACTIVA" : p == MissionPhase.Complete ? "RESUELTO" : p == MissionPhase.Interrupted ? "INTERRUMPIDA" : p == MissionPhase.Tutorial ? "TUTORIAL" : "ESPERANDO";
+    private static string TicketStateName(TicketStatus s) => s == TicketStatus.Submitted ? "En revision" : s == TicketStatus.Returned ? "Devuelto" : s == TicketStatus.Accepted ? "Aceptado" : "Sin ticket";
+    private static void Placeholder(TMP_InputField field,string text) { ((TMP_Text)field.placeholder).text=text; }
+    private static void SetVisible(GameObject target, bool value) { if (target.activeSelf != value) target.SetActive(value); }
+    private void SetGameCanvasHidden(bool hidden)
+    {
+        if (gameCanvasGroup == null && hidden)
+        {
+            var legacy = GameObject.Find("GameCanvas");
+            if (legacy == null) return;
+            gameCanvasGroup = legacy.GetComponent<CanvasGroup>();
+            if (gameCanvasGroup == null) gameCanvasGroup = legacy.AddComponent<CanvasGroup>();
+        }
+        if (gameCanvasGroup == null || hidden == gameCanvasHidden) return;
+        if (hidden)
+        {
+            savedCanvasAlpha = gameCanvasGroup.alpha; savedCanvasInteractable = gameCanvasGroup.interactable; savedCanvasRaycasts = gameCanvasGroup.blocksRaycasts;
+            gameCanvasGroup.alpha = 0; gameCanvasGroup.interactable = false; gameCanvasGroup.blocksRaycasts = false;
         }
         else
         {
-            currentMinigame = null;
+            gameCanvasGroup.alpha = savedCanvasAlpha; gameCanvasGroup.interactable = savedCanvasInteractable; gameCanvasGroup.blocksRaycasts = savedCanvasRaycasts;
         }
+        gameCanvasHidden = hidden;
     }
-
-    private static int CountRevealed(CooperativeIncident m, IncidentStep step)
+    public static void ReleaseTabletScreen()
     {
-        int count = 0;
-        if (step.hints == null) return 0;
-        for (int i = 0; i < step.hints.Length; i++) if (m.IsHintRevealed(i)) count++;
-        return count;
+        if (instance != null && instance.panelRect != null && instance.overlayRoot != null)
+            instance.panelRect.SetParent(instance.overlayRoot, false);
     }
-
-    private static string FeedbackText(CooperativeIncident m, out bool error)
+    private Button Button(Transform parent,string label,float x,float y,float w,float h,Action action)
+    { var b=UIFactory.CreateButton(label,parent,label,new Vector2(x,y),new Vector2(x+w,y+h),currentSkin.buttonPrimary,currentSkin); b.onClick.AddListener(()=>{localNotice=null; action(); if(config.click!=null)sound.PlayOneShot(config.click,.2f);}); return b; }
+    private TMP_Text Text(Transform parent,string text,float x,float y,float w,float h,float size=22)
+    { var t=UIFactory.CreateText("Text",parent,text,size,new Vector2(x,y),new Vector2(x+w,y+h),TextAlignmentOptions.TopLeft,currentSkin.bodyColor,currentSkin); t.richText=false;t.raycastTarget=false;return t; }
+    private TMP_InputField Input(Transform parent,float x,float y,float w,float h,string placeholder,int limit)
     {
-        error = false;
-        if (m.Feedback == IncidentFeedback.None || m.LastFeedbackStep < 0) return "";
-        if (!m.TryGetStepAt(m.LastFeedbackStep, out var s)) return "";
-        if (m.Feedback == IncidentFeedback.StepComplete)
-            return string.IsNullOrEmpty(s.successFeedback) ? "Paso completado." : s.successFeedback;
-        if (m.Feedback == IncidentFeedback.StepFailed)
-        {
-            error = true;
-            string t = string.IsNullOrEmpty(s.failureFeedback) ? "Intento incorrecto." : s.failureFeedback;
-            if (s.minigame != null && !string.IsNullOrEmpty(s.minigame.wrongFeedback))
-                t += " " + s.minigame.wrongFeedback;
-            return t;
-        }
-        if (m.Feedback == IncidentFeedback.NotAllowed) { error = true; return "Accion no permitida."; }
-        return "";
+        var go=UIFactory.CreatePanel("Input",parent,new Vector2(x,y),new Vector2(x+w,y+h),new Color(.07f,.12f,.16f),0,currentSkin);
+        var field=go.AddComponent<TMP_InputField>(); var text=Text(go.transform,"",.025f,.07f,.95f,.86f,20); var ph=Text(go.transform,placeholder,.025f,.07f,.95f,.86f,20);
+        ph.color=new Color(.55f,.65f,.7f); field.textViewport=go.GetComponent<RectTransform>();field.textComponent=(TextMeshProUGUI)text;field.placeholder=ph;field.characterLimit=limit;
+        field.targetGraphic=go.GetComponent<Image>(); field.readOnly=false;
+        field.caretColor=Color.white; field.customCaretColor=true; field.caretWidth=2;
+        field.onSelect.AddListener(_=>CyberDefense.UI.HeatSessionUI.RefreshGameplayInput());
+        field.onDeselect.AddListener(_=>CyberDefense.UI.HeatSessionUI.RefreshGameplayInput());return field;
     }
-
-    private void Options(MinigameDefinition def, MinigameSelection sel)
-    {
-        var options = def.options;
-        int shown = Mathf.Min(options.Length, choices.Length);
-        for (int i = 0; i < choices.Length; i++)
-        {
-            bool active = i < shown;
-            choices[i].gameObject.SetActive(active);
-            if (!active) continue;
-            LayoutOption(i, shown);
-            SetButtonLabel(choices[i], OptionLabel(def, sel, i, options[i].label));
-            var skin = Skin;
-            UIFactory.SetButtonColor(choices[i], sel.IsPicked(i) ? skin.buttonChoiceSelected : skin.buttonChoice);
-        }
-    }
-
-    private static string OptionLabel(MinigameDefinition def, MinigameSelection sel, int index, string label)
-    {
-        if (def.IsSequence)
-        {
-            int position = sel.SequencePosition(index);
-            return position > 0 ? $"{position}) {label}" : $"[ ] {label}";
-        }
-        return (sel.IsPicked(index) ? "[X] " : "[ ] ") + label;
-    }
-
-    private string SequenceText(MinigameDefinition def)
-    {
-        var builder = new System.Text.StringBuilder();
-        var options = def.options;
-        for (int i = 0; i < selection.SequenceLength; i++)
-        {
-            int index = selection.SequenceAt(i);
-            if (i > 0) builder.Append(" -> ");
-            builder.Append(i + 1).Append(") ");
-            builder.Append(options != null && index >= 0 && index < options.Length && options[index] != null
-                ? options[index].label : "?");
-        }
-        return builder.ToString();
-    }
-
-    private void LayoutOption(int index, int shown)
-    {
-        const float left = 0.06f, right = 0.94f, gap = 0.012f, bottom = 0.25f, top = 0.36f;
-        float width = (right - left - gap * (Mathf.Max(1, shown) - 1)) / Mathf.Max(1, shown);
-        float x0 = left + index * (width + gap);
-        var rect = choices[index].GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(x0, bottom);
-        rect.anchorMax = new Vector2(x0 + width, top);
-        rect.offsetMin = Vector2.zero;
-        rect.offsetMax = Vector2.zero;
-    }
-
-    private void Action(string label, UnityEngine.Events.UnityAction callback, bool enabled = true)
-    {
-        primaryButton.gameObject.SetActive(true);
-        primaryButton.interactable = enabled;
-        SetButtonLabel(primaryButton, label);
-        primaryButton.onClick.RemoveAllListeners();
-        primaryButton.onClick.AddListener(callback);
-    }
-
-    private static void SetButtonLabel(Button button, string label) { button.GetComponentInChildren<TMP_Text>().text = label; }
-    // ------------------------------------------------------------- construccion
-
     private void Build()
     {
-        var canvas = UIFactory.CreateCanvas("Role Terminal Canvas", transform, 250, new Vector2(1920, 1080));
-        var canvasTransform = canvas.transform;
-        var skin = Skin;
-
-        hintLabel = UIFactory.CreateText("Hint", canvasTransform, "TAB: abrir herramientas de rol", skin.hintSize,
-            new Vector2(0.02f, 0.02f), new Vector2(0.95f, 0.12f), TextAlignmentOptions.BottomLeft, skin.hintColor, skin);
-        hintLabel.gameObject.SetActive(false);
-
-        panelRoot = UIFactory.CreatePanel("Panel", canvasTransform, new Vector2(0.15f, 0.12f), new Vector2(0.85f, 0.88f),
-            skin.panelBackground, 0, skin);
-
-        titleLabel = UIFactory.CreateText("Title", panelRoot.transform, "TERMINAL", skin.titleSize,
-            new Vector2(0.05f, 0.88f), new Vector2(0.95f, 0.97f), TextAlignmentOptions.Center, skin.titleColor, skin);
-        bodyLabel = UIFactory.CreateText("Body", panelRoot.transform, "", skin.bodySize,
-            new Vector2(0.06f, 0.34f), new Vector2(0.94f, 0.78f), TextAlignmentOptions.TopLeft, skin.bodyColor, skin);
-        hintButton = UIFactory.CreateButton("Hint", panelRoot.transform, "Pista",
-            new Vector2(0.72f, 0.80f), new Vector2(0.95f, 0.86f), skin.buttonHint, skin);
-
-        primaryButton = UIFactory.CreateButton("Primary", panelRoot.transform, "Accion (pendiente)",
-            new Vector2(0.06f, 0.12f), new Vector2(0.60f, 0.22f), skin.buttonPrimary, skin);
-        secondaryButton = UIFactory.CreateButton("Secondary", panelRoot.transform, "Accion (pendiente)",
-            new Vector2(0.64f, 0.12f), new Vector2(0.94f, 0.22f), skin.buttonSecondary, skin);
-
-        bodyLabel.enableAutoSizing = true;
-        bodyLabel.fontSizeMin = skin.bodySize * 0.72f;
-        bodyLabel.fontSizeMax = skin.bodySize;
-        bodyLabel.richText = false;
-        SetButtonLabel(secondaryButton, "Cerrar (TAB / ESC)");
-        secondaryButton.onClick.AddListener(() => SetOpen(false));
-        hintButton.onClick.AddListener(() => CooperativeIncident.Instance.RequestHint());
-        for (int i = 0; i < choices.Length; i++)
-        {
-            int index = i;
-            choices[i] = UIFactory.CreateButton("Choice" + i, panelRoot.transform, "",
-                new Vector2(0.06f + i * 0.22f, 0.25f), new Vector2(0.26f + i * 0.22f, 0.36f), skin.buttonChoice, skin);
-            choices[i].onClick.AddListener(() =>
-            {
-                if (currentMinigame != null) selection.Pick(currentMinigame, index);
-                RefreshContent();
-            });
-        }
-        panelRoot.SetActive(false);
-        built = true;
+        var canvas=UIFactory.CreateCanvas("Mission HUD and tablet",transform,250,new Vector2(1920,1080));
+        overlayRoot=canvas.transform;
+        hudPanel=UIFactory.CreatePanel("HUD",canvas.transform,new Vector2(.025f,.89f),new Vector2(.46f,.975f),new Color(.015f,.03f,.05f,.72f),0,currentSkin);
+        hudPanel.GetComponent<Image>().raycastTarget=false;
+        hud=Text(hudPanel.transform,"",.025f,.08f,.95f,.86f,20);
+        controls=Text(canvas.transform,"TAB Tablet   ·   F2 Chat   ·   F3 Equipo   ·   ESC Menu",.37f,.018f,.61f,.065f,18);
+        controls.alignment=TextAlignmentOptions.BottomRight;
+        toast=Text(canvas.transform,"",.16f,.72f,.68f,.08f,24);toast.color=currentSkin.titleColor;
+        panel=UIFactory.CreatePanel("Tablet screen",canvas.transform,new Vector2(.09f,.08f),new Vector2(.91f,.92f),currentSkin.panelBackground,0,currentSkin);
+        panelRect=panel.GetComponent<RectTransform>(); group=panel.AddComponent<CanvasGroup>();
+        title=Text(panel.transform,"TABLET",.04f,.94f,.84f,.055f,26);title.color=currentSkin.titleColor;
+        Button(panel.transform,"X",.93f,.945f,.04f,.045f,()=>Open(false));
+        string[] tabLabels={"OPERACIONES","TICKETS","HISTORIAL","TUTORIAL"};
+        for(int i=0;i<tabs.Length;i++){int target=i;tabs[i]=Button(panel.transform,tabLabels[i],.04f+i*.23f,.87f,.21f,.055f,()=>{page=target;localNotice=null;});}
+        var scrollGo=new GameObject("Scrollable content",typeof(RectTransform),typeof(ScrollRect)); scrollGo.transform.SetParent(panel.transform,false);
+        var sr=scrollGo.GetComponent<RectTransform>(); sr.anchorMin=new Vector2(.04f,.28f);sr.anchorMax=new Vector2(.62f,.83f);sr.offsetMin=sr.offsetMax=Vector2.zero;
+        scrollGo.AddComponent<RectMask2D>(); var bg=scrollGo.AddComponent<Image>();bg.color=new Color(0,0,0,.1f);
+        var content=new GameObject("Content",typeof(RectTransform),typeof(ContentSizeFitter));content.transform.SetParent(scrollGo.transform,false);
+        var cr=content.GetComponent<RectTransform>();cr.anchorMin=new Vector2(0,1);cr.anchorMax=Vector2.one;cr.pivot=new Vector2(.5f,1);cr.offsetMin=cr.offsetMax=Vector2.zero;
+        body=content.AddComponent<TextMeshProUGUI>();body.fontSize=22;body.color=currentSkin.bodyColor;body.richText=false;
+        if(currentSkin.font!=null)body.font=currentSkin.font;
+        content.GetComponent<ContentSizeFitter>().verticalFit=ContentSizeFitter.FitMode.PreferredSize;
+        var scroll=scrollGo.GetComponent<ScrollRect>();scroll.viewport=sr;scroll.content=cr;scroll.horizontal=false;scroll.movementType=ScrollRect.MovementType.Clamped;scroll.scrollSensitivity=35;
+        bodyViewport=scrollGo;
+        for(int i=0;i<4;i++) options[i]=Button(panel.transform,"",.65f,.71f-i*.11f,.31f,.095f,()=>{});
+        primary=Button(panel.transform,"",.65f,.17f,.31f,.075f,()=>primaryAction?.Invoke());
+        secondary=Button(panel.transform,"",.65f,.07f,.31f,.075f,()=>secondaryAction?.Invoke());
+        hint=Button(panel.transform,"Pista",.65f,.27f,.31f,.055f,()=>Mission.RequestHint());
+        identifier=Input(panel.transform,.04f,.17f,.57f,.07f,"Identificador",32);
+        error=Text(panel.transform,"",.04f,.055f,.57f,.095f,18);error.color=currentSkin.errorColor;
+        var bar=UIFactory.CreatePanel("Progress",panel.transform,new Vector2(.04f,.015f),new Vector2(.96f,.045f),new Color(.1f,.15f,.2f),0,currentSkin);
+        var fill=UIFactory.CreatePanel("Fill",bar.transform,Vector2.zero,Vector2.one,currentSkin.titleColor,0,currentSkin);progress=fill.GetComponent<Image>();
+        progressLabel=Text(bar.transform,"",.01f,0,.98f,1,18);
+        form=UIFactory.CreatePanel("Ticket draft",panel.transform,new Vector2(.04f,.28f),new Vector2(.96f,.83f),currentSkin.panelBackground,0,currentSkin);
+        Text(form.transform,"DIAGNOSTICO • pulsa para elegir",0,.88f,.48f,.1f,22);
+        Text(form.transform,"EVIDENCIAS • seleccion multiple",.51f,.88f,.49f,.1f,22);
+        for(int i=0;i<4;i++){int idx=i;fields[i]=Button(form.transform,"",0,.67f-i*.18f,.48f,.16f,()=>{if(idx==0)diagnosis=(diagnosis+1)%3;else if(idx==1)severity=(severity+1)%3;else if(idx==2)recommendation=(recommendation+1)%3;else system=(system+1)%2;});
+            evidence[i]=Button(form.transform,"",.51f,.67f-i*.15f,.49f,.13f,()=>evidenceMask^=1<<idx);}
+        comment=Input(form.transform,.51f,.02f,.49f,.16f,"Comentario opcional",128);
+        panel.SetActive(false);
     }
 }

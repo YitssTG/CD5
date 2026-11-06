@@ -159,6 +159,8 @@ public class RoleManager : NetworkBehaviour
     public void RPC_RequestRole(RoleType role, RpcInfo info = default)
     {
         if (!HasStateAuthority) return;
+        if (CooperativeIncident.Instance != null && CooperativeIncident.Instance.IsOnline &&
+            CooperativeIncident.Instance.Phase != MissionPhase.Waiting) return;
         AssignRole(info.Source, role);
     }
 
@@ -186,6 +188,8 @@ public class RoleManager : NetworkBehaviour
     public void RPC_ReleaseRole(RpcInfo info = default)
     {
         if (!HasStateAuthority) return;
+        if (CooperativeIncident.Instance != null && CooperativeIncident.Instance.IsOnline &&
+            CooperativeIncident.Instance.Phase != MissionPhase.Waiting) return;
         PlayerRef sender = info.Source;
         if (!IsActivePlayer(sender)) return;
         bool changed = false;
@@ -270,6 +274,14 @@ public class RoleManager : NetworkBehaviour
         {
             playerRole.SetRole(role);
         }
+    }
+
+    public void SwapForReplay()
+    {
+        if (!IsOnline || !HasStateAuthority) return;
+        var oldAdmin = AdminPlayer; AdminPlayer = PentesterPlayer; PentesterPlayer = oldAdmin;
+        RPC_RoleConfirmed(AdminPlayer, RoleType.Admin);
+        RPC_RoleConfirmed(PentesterPlayer, RoleType.Pentester);
     }
 
     private bool IsActivePlayer(PlayerRef player)

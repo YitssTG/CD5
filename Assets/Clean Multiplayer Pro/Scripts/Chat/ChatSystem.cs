@@ -19,6 +19,37 @@ public class ChatSystem : MonoBehaviour
     private ChatPlayer _chatPlayer;
 
     private bool _hasUserScroll;
+    private CanvasGroup compactGroup;
+    public bool IsOpen { get; private set; }
+    public int Unread { get; private set; }
+
+    public void ConfigureCompact(GameObject root)
+    {
+        compactGroup = root.GetComponent<CanvasGroup>() ?? root.AddComponent<CanvasGroup>();
+        var rect = root.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(.025f,.075f); rect.anchorMax = new Vector2(.29f,.33f);
+        rect.offsetMin = rect.offsetMax = Vector2.zero;
+        if (chatInput.placeholder is TMP_Text placeholder) placeholder.text = "Mensaje al equipo...";
+        SetOpen(false);
+    }
+
+    public void SetOpen(bool value)
+    {
+        if (compactGroup == null) return;
+        IsOpen = value;
+        compactGroup.alpha = value ? 1 : 0;
+        compactGroup.interactable = compactGroup.blocksRaycasts = value;
+        if (compactGroup.gameObject.activeSelf != value) compactGroup.gameObject.SetActive(value);
+        if (value) { Unread = 0; chatInput.ActivateInputField(); }
+        else
+        {
+            chatInput.DeactivateInputField();
+            if (UnityEngine.EventSystems.EventSystem.current != null &&
+                UnityEngine.EventSystems.EventSystem.current.currentSelectedGameObject == chatInput.gameObject)
+                UnityEngine.EventSystems.EventSystem.current.SetSelectedGameObject(null);
+            if (_chatPlayer != null) _chatPlayer.SetPlayerIsWriting(false);
+        }
+    }
 
     private void Awake()
     {
@@ -55,6 +86,7 @@ public class ChatSystem : MonoBehaviour
 
     public void AddChatEntry(bool isLeft,Chat chat)
     {
+        if (isLeft && !IsOpen) Unread++;
         var go = Instantiate(chatPrefab, chatContainer.transform);
         go.Init(isLeft,chat);
         if (_hasUserScroll && !(scrollRect.verticalNormalizedPosition <= 0.1f))
@@ -93,5 +125,6 @@ public class ChatSystem : MonoBehaviour
             ? $"<color=#D96222>{text.Count()}/{chatInput.characterLimit}</color>"
             : $"{text.Count()}/{chatInput.characterLimit}";
     }
+    private void OnDestroy() { if (Instance == this) Instance = null; }
 }
 #endif

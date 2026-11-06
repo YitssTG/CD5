@@ -1,0 +1,95 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Text.Json;
+using Fusion;
+class MissionTests
+{
+ static int count;
+ static void Check(bool value,string message){if(!value)throw new Exception(message);Console.WriteLine("PASS "+message);count++;}
+ static PlayerRef A=new PlayerRef{Id=1},P=new PlayerRef{Id=2},X=new PlayerRef{Id=3};
+ static void Main(string[] args)
+ {
+  var def=new IncidentDefinition();var steps=SqlInjectionFlow.Build(def);def.steps=steps;
+  Check(steps.Length==7,"seven configured mission steps");
+  foreach(var s in steps)Check(s.authorizedRole!=RoleType.SinAsignar,"each step requires a role: "+s.stepId);
+  Check(!steps[5].briefing.Contains(def.explanation),"repair briefing does not expose final explanation");
+  Check(!TicketRules.IsValid(0,32,2,0,0),"invalid evidence bits rejected");
+  Check(TicketRules.IsCorrect(0,7,2,0,0),"correct report recognized");
+  Check(TicketRules.NormalizeComment(null)=="" && TicketRules.NormalizeComment(new string('x',160)).Length==128,"ticket comment bounded before RPC serialization");
+  string unicode=TicketRules.NormalizeComment(new string('\u754c',128));
+  Check(System.Text.Encoding.UTF8.GetByteCount(unicode)+64<=512,"worst-case UTF8 comment fits RPC with conservative overhead");
+  Check(TicketRules.NormalizeComment(new string('a',127)+"\U0001F512").Length==127,"comment truncation does not split surrogate pairs");
+  Check(typeof(CooperativeIncident).GetMethod("RPC_Ticket").GetParameters()[7].ParameterType==typeof(string),"ticket RPC uses variable UTF8 string instead of oversized fixed storage");
+  Check(!TicketRules.IsCorrect(1,7,2,0,0),"wrong diagnosis remains incorrect");
+  Check(!MinigameSelection.MatchesOrder(unchecked((int)0x01000101),new[]{0}),"sequence high-byte garbage rejected");
+  Check(!MinigameSelection.MatchesOrder(0,new[]{0,1,2,3,4}),"sequence length above capacity rejected");
+  Check(!IncidentEngine.TryEvaluate(steps,5,RoleType.Admin,unchecked((int)0x01030201),0,out _,out _,out _),"extra sequence bytes rejected by engine");
+  var selection=new MinigameSelection();selection.Pick(steps[1].minigame,32);Check(selection.Mask==0,"selection cannot shift beyond evidence mask");
+  var r=new NetworkRunner{LocalPlayer=P,ActivePlayers=new List<PlayerRef>{A,P}};
+  r.Avatars[A]=new NetworkObject{StateAuthority=A};r.Avatars[P]=new NetworkObject{StateAuthority=P};
+  var roles=new RoleManager{Runner=r};roles.Spawned();roles.AdminPlayer=A;roles.PentesterPlayer=P;roles.GameStarted=true;roles.AdminReady=roles.PentesterReady=true;
+  var server=new ServidorRed();UnityEngine.Object.Registry[typeof(ServidorRed)]=new[]{server};UnityEngine.Object.Registry[typeof(ConsolaControl)]=new[]{new ConsolaControl{servidorAsociado=server}};
+  var m=new CooperativeIncident{Runner=r};typeof(CooperativeIncident).GetField("definition",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(m,def);m.Spawned();m.FixedUpdateNetwork();
+  RpcInfo From(PlayerRef p)=>new RpcInfo{Source=p};
+  void Submit(PlayerRef p,int choice,int mask=0)=>m.RPC_Submit(m.IncidentNumber,m.Revision,m.CurrentStep,choice,mask,From(p));
+  void Advance(){r.SimulationTime+=10;m.FixedUpdateNetwork();}
+  void Ticket(int diagnosis)=>m.RPC_Ticket(m.IncidentNumber,m.Revision,diagnosis,7,2,0,0,"simulated",From(P));
+  Check(m.Phase==MissionPhase.Tutorial && m.Elapsed==0,"team enters free tutorial before mission timer");
+  m.RPC_Tutorial(m.IncidentNumber,false,From(A));m.RPC_Tutorial(m.IncidentNumber,false,From(A));Check(m.Phase==MissionPhase.Tutorial,"one player cannot start twice");
+  r.SimulationTime+=12;m.RPC_Tutorial(m.IncidentNumber,true,From(P));Check(m.Phase==MissionPhase.Active && m.TutorialSeconds==12,"both confirmations start mission");
+  int rev=m.Revision;Submit(A,-1);Submit(X,-1);Check(m.Revision==rev,"wrong role and outsider cannot analyze");
+  m.RPC_Identify(m.IncidentNumber,m.Revision,"bad",From(P));Check(!m.ServerIdentified && m.Penalty==0,"bad server ID has no penalty");
+  m.RPC_Identify(m.IncidentNumber,m.Revision,"srv-01",From(P));Submit(P,-1);Check(m.Operating && m.CurrentStep==0,"analysis starts timed operation");
+  r.Avatars[P].transform.position=new UnityEngine.Vector3{x=20};m.FixedUpdateNetwork();Check(!m.Operating && m.CurrentStep==0 && m.Score==0,"leaving cancels operation without reward");
+  r.Avatars[P].transform.position=default;Submit(P,-1);Advance();Check(m.CurrentStep==1,"analysis completes on authority clock");
+  rev=m.Revision;int penalty=m.Penalty;m.RPC_Hint(m.IncidentNumber,rev,m.CurrentStep,From(A));Check(m.Penalty==penalty,"unauthorized hint cannot charge team");
+  m.RPC_Hint(m.IncidentNumber,rev,m.CurrentStep,From(P));m.RPC_Hint(m.IncidentNumber,rev,m.CurrentStep,From(P));Check(m.HintsUsed==1 && m.Penalty==penalty+3,"hint replay costs once");
+  Submit(P,-1,7);Check(m.CurrentStep==2,"relevant evidence advances to private draft");
+  r.Avatars[P].transform.position=new UnityEngine.Vector3{x=20};Ticket(1);Check(m.CurrentStep==3 && m.Ticket.Version==1,"wrong report can be sent remotely for review");
+  rev=m.Revision;m.RPC_ReviewTicket(m.IncidentNumber,rev,true,From(A));Check(m.Revision==rev,"admin must enter ticket code");
+  m.RPC_UnlockTicket(m.IncidentNumber,m.Revision,"wrong",From(A));Check(m.TicketUnlockedVersion==0,"wrong code does not unlock report");
+  m.RPC_UnlockTicket(m.IncidentNumber,m.Revision,TicketRules.Code(m.IncidentNumber,1),From(A));rev=m.Revision;
+  m.RPC_ReviewTicket(m.IncidentNumber,rev,false,From(A));int after=m.Penalty;m.RPC_ReviewTicket(m.IncidentNumber,rev,false,From(A));Check(m.CurrentStep==2 && m.Penalty==after && m.ReturnedTickets==1,"returned incorrect ticket charged once");
+  Ticket(0);m.RPC_UnlockTicket(m.IncidentNumber,m.Revision,TicketRules.Code(m.IncidentNumber,2),From(A));m.RPC_ReviewTicket(m.IncidentNumber,m.Revision,true,From(A));Check(m.TicketState==TicketStatus.Accepted && m.CurrentStep==4,"corrected report accepted");
+  Submit(A,0);Advance();Check(m.CurrentStep==5,"containment completes before repair");
+  Submit(A,MinigameSelection.Pack(new byte[]{1,0,2},3));Check(m.CurrentStep==5 && m.WrongAttempts>0,"wrong repair order cannot resolve");Advance();
+  Submit(A,MinigameSelection.Pack(new byte[]{0,1,2},3));Advance();Check(m.CurrentStep==6,"correct repair requests independent verification");
+  rev=m.Revision;Submit(A,0);Check(m.Revision==rev,"admin cannot verify own repair");
+  r.Avatars[P].transform.position=default;Submit(P,0);Advance();Check(m.Phase==MissionPhase.Complete,"full cooperative path resolves");
+  float elapsed=m.Elapsed;Advance();Check(m.Elapsed==elapsed,"mission timer stops at completion");
+  Check(m.Summary().Contains("TK-001-002") && m.Journal().Contains("correccion"),"final report contains actual ticket history and events");
+  var ph=SqlInjectionFlow.BuildPhishing();
+  Check(ph.Length==4 && ph[0].authorizedRole==RoleType.Pentester && ph[2].authorizedRole==RoleType.Admin,"phishing assigns investigation and response to different roles");
+  Check(IncidentEngine.TryEvaluate(ph,0,RoleType.Pentester,-1,7,out bool phCorrect,out _,out _) && phCorrect,"phishing accepts observed sender urgency and link");
+  Check(IncidentEngine.TryEvaluate(ph,0,RoleType.Pentester,-1,15,out phCorrect,out _,out _) && !phCorrect,"phishing rejects unsupported hardware evidence");
+  Check(!IncidentEngine.TryEvaluate(ph,2,RoleType.Pentester,0,0,out _,out _,out _),"attacker cannot perform defender response");
+  int n=m.IncidentNumber;m.RPC_Replay(n,true,From(A));Check(m.IncidentNumber==n,"restart requires both participants");m.RPC_Replay(n,true,From(P));Check(m.Phase==MissionPhase.Tutorial && roles.AdminPlayer==P && m.Investigator==A,"coordinated swap starts a clean tutorial");
+  r.ActivePlayers.Remove(A);m.FixedUpdateNetwork();Check(m.Phase==MissionPhase.Interrupted && !m.Operating,"disconnect ends mission rather than restarting");
+  int old=m.IncidentNumber;r.ActivePlayers.Add(A);m.FixedUpdateNetwork();Check(m.Phase==MissionPhase.Interrupted && m.IncidentNumber==old,"rejoining cannot silently resume interrupted session");
+  Check(m.Records.Length==64 && m.TicketHistory.Length==16,"bounded journal and ticket capacities");
+  int totalBefore=m.RecordCount, scoreBefore=m.Score;
+  var record=typeof(CooperativeIncident).GetMethod("Record",BindingFlags.Instance|BindingFlags.NonPublic);
+  for(int i=0;i<70;i++)record.Invoke(m,new object[]{MissionEventKind.Evidence,P,0,new string('x',150)});
+  Check(m.RecordCount==totalBefore+70 && m.Score==scoreBefore,"journal wraps without losing counters or changing score");
+  var latest=m.Records[(m.RecordCount-1)%m.Records.Length];
+  Check(latest.Sequence==m.RecordCount && latest.Detail.ToString().Length==64,"latest event retained with bounded text");
+  Check(m.Journal().Contains("ultimos 64 eventos"),"journal discloses retained event limit");
+  var campaign=new CooperativeIncident{Runner=r};
+  typeof(CooperativeIncident).GetField("definition",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(campaign,def);
+  campaign.Spawned();campaign.FixedUpdateNetwork();campaign.Phase=MissionPhase.Complete;campaign.Score=42;
+  int campaignId=campaign.IncidentNumber;
+  campaign.RPC_NextIncident(campaignId,From(P));
+  Check(!campaign.IsPhishing,"second incident requires both votes");
+  campaign.RPC_NextIncident(campaignId,From(A));
+  Check(campaign.IsPhishing && campaign.Phase==MissionPhase.Tutorial && campaign.SqlCampaignScore==42,"both votes advance and retain SQL score");
+  campaign.RPC_Tutorial(campaign.IncidentNumber,true,From(P));campaign.RPC_Tutorial(campaign.IncidentNumber,true,From(A));
+  campaign.RPC_Submit(campaign.IncidentNumber,campaign.Revision,0,-1,7,From(A));
+  campaign.RPC_Submit(campaign.IncidentNumber,campaign.Revision,1,0,0,From(A));
+  campaign.RPC_Submit(campaign.IncidentNumber,campaign.Revision,2,0,0,From(P));
+  campaign.RPC_Submit(campaign.IncidentNumber,campaign.Revision,3,0,0,From(A));
+  Check(campaign.Phase==MissionPhase.Complete && campaign.Summary().Contains("PHISHING"),"cooperative phishing path reaches educational summary");
+  Console.WriteLine(count+" checks passed. ENGINE/FUSION STUBS: no live multiplayer, weaving or UI validation.");
+  if(args.Length==2 && args[0]=="--export")System.IO.File.WriteAllText(args[1],JsonSerializer.Serialize(steps,new JsonSerializerOptions{IncludeFields=true,IgnoreReadOnlyProperties=true,WriteIndented=true}));
+ }
+}

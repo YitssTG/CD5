@@ -9,6 +9,7 @@ public class PlayerRole : NetworkBehaviour
     public RoleType rolInicial = RoleType.SinAsignar;
 
     [Networked] public RoleType MyRole { get; set; }
+    [Networked] public NetworkBool TabletRaised { get; set; }
 
     private StarterAssetsInputs _input;
     private RoleType _lastVisualRole = (RoleType)(-1);

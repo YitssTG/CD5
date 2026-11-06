@@ -177,6 +177,9 @@ namespace AvocadoShark
 
         public async void ReturnToMenu(string error = null)
         {
+            MissionTransition.Show("Cerrando sesion...");
+            if (CooperativeIncident.Instance != null && CooperativeIncident.Instance.IsOnline)
+                MissionExitReport.Capture(CooperativeIncident.Instance);
             try { await ReturnToMenuAsync(error); }
             catch (Exception exception) { Debug.LogException(exception); }
         }
@@ -221,6 +224,7 @@ namespace AvocadoShark
             // A fresh scene supplies fresh UI references and a fresh session controller.
             var load = SceneManager.LoadSceneAsync(MenuScenePath, LoadSceneMode.Single);
             while (!load.isDone) await Task.Yield();
+            MissionTransition.Finish();
         }
 
         public void ChangeRegion(int regionNum)
@@ -453,6 +457,7 @@ namespace AvocadoShark
         private async void StartSession(string sessionName, int? maxPlayers, string password)
         {
             if (_operationInProgress || _returningToMenu || (Runner != null && Runner.IsRunning)) return;
+            MissionTransition.Show("Conectando al equipo y cargando escenario...");
             _operationInProgress = true;
             try
             {
@@ -503,6 +508,7 @@ namespace AvocadoShark
 
             _voiceManager.Init(playerObject.GetComponent<StarterAssetsInputs>(),
                 playerObject.GetComponent<PlayerWorldUIManager>());
+            MissionTransition.Finish();
 
 
         }
@@ -571,6 +577,7 @@ namespace AvocadoShark
         public void OnPlayerLeft(NetworkRunner runner, PlayerRef player)
         {
             if (runner != Runner) return;
+            if (CooperativeIncident.Instance != null) CooperativeIncident.Instance.PlayerDeparted(player);
             playersInSession.RemoveAll(item => item == player);
             if (SessionPlayers.instance != null) SessionPlayers.instance.RemovePlayer(player);
         }

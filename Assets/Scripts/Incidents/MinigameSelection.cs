@@ -32,7 +32,7 @@ public sealed class MinigameSelection
 
     public void Pick(MinigameDefinition def, int index)
     {
-        if (def == null || index < 0) return;
+        if (def == null || def.options == null || index < 0 || index >= def.options.Length || index >= 31) return;
         if (def.IsMultiSelect) ToggleMask(index);
         else if (def.IsSequence) ToggleSequence(index);
         else { single = index; mask = 1 << index; }
@@ -40,7 +40,7 @@ public sealed class MinigameSelection
 
     public bool IsPicked(int index)
     {
-        if (index < 0) return false;
+        if (index < 0 || index >= 31) return false;
         if (single >= 0 && single == index) return true;
         if ((mask & (1 << index)) != 0) return true;
         return IndexOfSequence(index) >= 0;
@@ -114,7 +114,7 @@ public sealed class MinigameSelection
     {
         int packed = 0;
         if (entries == null) return packed;
-        for (int i = 0; i < length && i < MaxSequence; i++)
+        for (int i = 0; i < length && i < MaxSequence && i < entries.Length; i++)
         {
             int raw = entries[i] + PackBase;
             if (raw <= 0 || raw > 255) break;
@@ -126,7 +126,7 @@ public sealed class MinigameSelection
     /// <summary>Verifica que el paquete coincida exactamente con la secuencia requerida.</summary>
     public static bool MatchesOrder(int packed, int[] required)
     {
-        if (required == null || required.Length == 0) return false;
+        if (required == null || required.Length == 0 || required.Length > MaxSequence) return false;
         for (int i = 0; i < required.Length; i++)
         {
             int raw = (packed >> (8 * i)) & 0xFF;
@@ -136,8 +136,7 @@ public sealed class MinigameSelection
         // 8*4 = 32 haria rotar el turno en C#; con 4 entradas ya se llena el entero.
         if (required.Length < MaxSequence)
         {
-            int extra = (packed >> (8 * required.Length)) & 0xFF;
-            if (extra != 0) return false;
+            if (((uint)packed >> (8 * required.Length)) != 0) return false;
         }
         return true;
     }

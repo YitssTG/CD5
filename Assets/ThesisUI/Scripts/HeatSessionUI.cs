@@ -10,6 +10,7 @@ using UnityEngine.Events;
 using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using UnityEngine.InputSystem;
 
 namespace CyberDefense.UI
 {
@@ -28,6 +29,11 @@ namespace CyberDefense.UI
         private PauseMenuManager pauseManager;
         private bool inGame;
         private bool pauseOpen;
+        private bool switchingLobby;
+        private CanvasGroup roster;
+        private CanvasGroup legacyRoomControls;
+        private bool rosterOpen;
+        private GameObject fallbackPause;
         public static bool IsPaused => pauseUI != null && pauseUI.pauseOpen;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -57,6 +63,7 @@ namespace CyberDefense.UI
 
         private IEnumerator LoadUI()
         {
+            if (inGame) { pauseUI = this; ConfigureGameplayHUD(); }
             if (!inGame)
             {
                 lobbyCanvases.AddRange(Components<Canvas>(ownerScene).Where(canvas => canvas.enabled));
@@ -77,6 +84,38 @@ namespace CyberDefense.UI
             yield return null; // Let Heat initialize panel navigation before binding actions.
             if (inGame) BindPause(scene);
             else BindMenu(scene);
+        }
+
+        private void ConfigureGameplayHUD()
+        {
+            var canvas = Components<Canvas>(ownerScene).FirstOrDefault(c => c.name == "GameCanvas");
+            if (canvas == null) return;
+            foreach (Transform child in canvas.transform)
+            {
+                if (child.name == "ChatObject")
+                {
+                    if (ChatSystem.Instance != null) ChatSystem.Instance.ConfigureCompact(child.gameObject);
+                    continue;
+                }
+                if (child.name != "Room stats" && child.name != "Room Details" && child.name != "Inventory Toggel" && child.name != "Inventory UI Panel" && child.name != "PlayerList" && child.name != "Game Pause") continue;
+                var group = child.GetComponent<CanvasGroup>() ?? child.gameObject.AddComponent<CanvasGroup>();
+                ShowGroup(group, false);
+                if (child.name == "PlayerList")
+                {
+                    roster = group;
+                    var rect = child.GetComponent<RectTransform>();
+                    rect.anchorMin = new Vector2(.025f,.64f); rect.anchorMax = new Vector2(.25f,.85f);
+                    rect.offsetMin = rect.offsetMax = Vector2.zero;
+                }
+                if (child.name == "Room Details") legacyRoomControls = group;
+            }
+        }
+        private static void ShowGroup(CanvasGroup group, bool show)
+        {
+            if (group == null) return;
+            group.alpha = show ? 1 : 0;
+            group.interactable = group.blocksRaycasts = show;
+            if (group.gameObject.activeSelf != show) group.gameObject.SetActive(show);
         }
 
         private void BindMenu(Scene scene)
@@ -122,10 +161,21 @@ namespace CyberDefense.UI
 
         private void ShowLobby()
         {
+            if (switchingLobby) return;
+            switchingLobby = true;
+            StartCoroutine(RevealLobby());
+        }
+
+        private IEnumerator RevealLobby()
+        {
+            MissionTransition.Show("Abriendo sala cooperativa...");
+            yield return new WaitForSecondsRealtime(.22f);
             heatCanvas.SetActive(false);
             foreach (var canvas in lobbyCanvases) if (canvas != null) canvas.enabled = true;
             backCanvas.SetActive(true);
             EventSystem.current?.SetSelectedGameObject(null);
+            MissionTransition.Finish();
+            switchingLobby = false;
         }
 
         private void ShowHome()
@@ -170,6 +220,8 @@ namespace CyberDefense.UI
         private void BindPause(Scene scene)
         {
             pauseManager = Components<PauseMenuManager>(scene).Single();
+            // One owner for ESC: fields -> tablet/PC -> Heat pause. Start has already run.
+            pauseManager.enabled = false;
             // Role selection and terminal canvases use 300 and 250 respectively.
             pauseManager.pauseMenuCanvas.GetComponent<Canvas>().sortingOrder = 400;
             pauseUI = this;
@@ -178,7 +230,7 @@ namespace CyberDefense.UI
             var exit = Components<ModalWindowManager>(scene).Single();
             exit.useLocalization = false;
             exit.titleText = "Salir de la sesión";
-            exit.descriptionText = "Volverás al menú principal. El otro jugador puede seguir conectado.";
+            exit.descriptionText = "Volverás al menú. Si la misión sigue activa, se interrumpirá para ambos.";
             exit.onConfirm = Action(ShowHome);
             exit.UpdateUI();
             foreach (var button in Components<PanelButton>(scene))
@@ -193,16 +245,37 @@ namespace CyberDefense.UI
         private void OnPauseOpened() { pauseOpen = true; RefreshGameplayInput(); }
         private void OnPauseClosed() { pauseOpen = false; RefreshGameplayInput(); }
 
+        private void Update()
+        {
+            if (!inGame || Keyboard.current == null) return;
+            var chat = ChatSystem.Instance;
+            if (!IsPaused && !RoleTerminalUI.TabletVisible && !RoleTerminalUI.IsOpen)
+            {
+                if (Keyboard.current.f2Key.wasPressedThisFrame && chat != null) chat.SetOpen(!chat.IsOpen);
+                if (Keyboard.current.f3Key.wasPressedThisFrame && !RoleTerminalUI.IsTyping) rosterOpen = !rosterOpen;
+            }
+            if (!Keyboard.current.escapeKey.wasPressedThisFrame) return;
+            if (chat != null && chat.IsOpen) { chat.SetOpen(false); return; }
+            if (rosterOpen) { rosterOpen = false; return; }
+            if (IsPaused) ClosePause();
+            else if (!RoleTerminalUI.ConsumeEscape()) OpenPause();
+        }
+
         private void LateUpdate()
         {
             if (!inGame) return;
+            bool busy = IsPaused || RoleTerminalUI.TabletVisible || RoleTerminalUI.IsOpen;
+            if (busy) { rosterOpen = false; if (ChatSystem.Instance != null && ChatSystem.Instance.IsOpen) ChatSystem.Instance.SetOpen(false); }
+            ShowGroup(roster, rosterOpen);
+            ShowGroup(legacyRoomControls, false);
             RefreshGameplayInput();
         }
 
         public static void RefreshGameplayInput()
         {
             bool canPlay = RoleManager.Instance != null && RoleManager.Instance.IsOnline &&
-                RoleManager.Instance.GameStarted && !IsPaused && !RoleTerminalUI.IsOpen;
+                RoleManager.Instance.GameStarted && !IsPaused && !RoleTerminalUI.IsOpen && !RoleTerminalUI.IsTyping &&
+                !(ChatSystem.Instance != null && ChatSystem.Instance.IsOpen) && !(pauseUI != null && pauseUI.rosterOpen);
             SetInput(canPlay);
             if (FusionConnection.Instance != null &&
                 FusionConnection.Instance.TryGetLocalPlayerComponent(out StarterAssetsInputs input))
@@ -220,16 +293,33 @@ namespace CyberDefense.UI
 
         public static bool OpenPause()
         {
-            if (pauseUI == null || pauseUI.pauseManager == null) return false;
-            pauseUI.pauseManager.OpenPauseMenu();
+            if (pauseUI == null) return false;
+            if (pauseUI.pauseManager != null) pauseUI.pauseManager.OpenPauseMenu();
+            else pauseUI.OpenFallbackPause();
             return true;
         }
 
         public static bool ClosePause()
         {
-            if (pauseUI == null || pauseUI.pauseManager == null) return false;
-            pauseUI.pauseManager.ClosePauseMenu();
+            if (pauseUI == null) return false;
+            if (pauseUI.pauseManager != null) pauseUI.pauseManager.ClosePauseMenu();
+            else { if (pauseUI.fallbackPause != null) pauseUI.fallbackPause.SetActive(false); pauseUI.OnPauseClosed(); }
             return true;
+        }
+
+        private void OpenFallbackPause()
+        {
+            if (fallbackPause == null)
+            {
+                var skin = IncidentUISkin.CreateDefault();
+                var canvas = UIFactory.CreateCanvas("Session menu", transform, 400, new Vector2(1920,1080));
+                fallbackPause = canvas.gameObject;
+                var card = UIFactory.CreatePanel("Menu", canvas.transform, new Vector2(.35f,.32f), new Vector2(.65f,.68f), new Color(.025f,.045f,.065f,.98f), 0, skin);
+                UIFactory.CreateText("Title",card.transform,"CYBER DEFENSE",28,new Vector2(.08f,.73f),new Vector2(.92f,.92f),TextAlignmentOptions.Center,Color.white,skin);
+                UIFactory.CreateButton("Continue",card.transform,"Continuar",new Vector2(.1f,.42f),new Vector2(.9f,.64f),skin.buttonPrimary,skin).onClick.AddListener(()=>ClosePause());
+                UIFactory.CreateButton("Exit",card.transform,"Volver al menu",new Vector2(.1f,.12f),new Vector2(.9f,.34f),skin.buttonPrimary,skin).onClick.AddListener(ShowHome);
+            }
+            fallbackPause.SetActive(true); OnPauseOpened();
         }
 
         private void OnDestroy()

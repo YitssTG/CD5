@@ -32,6 +32,17 @@ namespace AvocadoShark
             AssetInputs.SetLocalControl(isLocal);
             PlayerInput.enabled = isLocal;
             thirdPersonController.enabled = false;
+            // Only this client's own instance is hidden; peers retain the full avatar.
+            if (isLocal)
+            {
+                foreach (var renderer in PlayerModel.GetComponentsInChildren<Renderer>())
+                    renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly;
+                var cc = GetComponent<CharacterController>();
+                if (cc != null) playerCameraRoot.localPosition = new Vector3(0, Mathf.Clamp(cc.height * .9f, 1.4f, 1.8f), 0);
+                if (Camera.main != null) Camera.main.nearClipPlane = .04f;
+            }
+            var tablet = gameObject.AddComponent<TabletPresentation>();
+            tablet.Initialize(GetComponent<PlayerRole>(), isLocal);
             Debug.Log($"[LocalControl] avatar={Object.Id} local={Runner.LocalPlayer} owner={Object.StateAuthority} stateAuthority={HasStateAuthority} inputAuthority={HasInputAuthority} enabled={isLocal} devices={PlayerInput.devices.Count} scheme={PlayerInput.currentControlScheme}");
             if (isLocal)
             {

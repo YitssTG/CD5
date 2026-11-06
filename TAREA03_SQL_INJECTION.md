@@ -1,51 +1,109 @@
-# Tarea 03 — SQL Injection cooperativo
+# CyberDefenseCoop — misión cooperativa SQL Injection
 
-Estado: implementación y comprobaciones de código realizadas. Falta validar importación/Fusion IL weaving, presentación y recorrido completo en dos clientes reales. No se declara completada la Tarea 03.
+Actualización: 3 de noviembre de 2026.
+Estado: implementación conectada y comprobaciones de C# y lógica realizadas. NO equivale a una validación de la partida real. Falta importar/procesar con Fusion, generar el build y comprobar visualmente ambos clientes.
 
-## Configuración
+## Antes de probar
 
-- Abrir el proyecto y dejar que Unity importe los nuevos scripts. Fuera de Play, recargar Game y Environment 1 si estaban abiertas con una versión anterior en memoria.
-- Game / RoleSystem: CooperativeIncident añadido al NetworkObject existente, registrado en NetworkedBehaviours y vinculado a Assets/Scripts/Roles/SQLInjection.asset.
-- Environment 1: se reutilizan el único ServidorRed y su ConsolaControl asociada. El servidor sigue al Shared master para conservarse si sale su propietario. No se añadieron objetos de red ni prefabs de terminal.
-- SQLInjection.asset: penalización por reporte incorrecto = 10 puntos, espera = 5 segundos, radio de interacción = 4 metros. Evidencias y explicación editables. La puntuación es una penalización del ejercicio, no monedas ni tiempo total.
-- Configurar el mismo asset y generar un NUEVO build para ambos clientes. Un ejecutable anterior no contiene el nuevo NetworkBehaviour y no debe conectarse a esta versión.
-- Shared se conserva; no hay paquetes nuevos. La misión utiliza RoleTerminalUI; Heat continúa únicamente en menú/pausa.
+1. Detener Play. Revisar/guardar manualmente cualquier escena con cambios propios antes de recargarla. No se descartaron escenas desde esta implementación.
+2. Dejar que Unity termine de importar y compilar. Abrir Console y corregir cualquier error real antes de continuar.
+3. Ejecutar **CyberDefense → Validar configuración de la misión**. Comprueba los siete pasos, modelo de tablet, temas y audio. Este menú todavía debe ejecutarse en tu Editor.
+4. Ejecutar **CyberDefense → Crear build Windows en carpeta nueva**. No sobrescribe builds: usa una carpeta con fecha/hora y se niega a construir si hay escenas sin guardar.
+5. Usar dos ejecutables de ese MISMO build (o Editor y build actualizado). No conectar una versión anterior: cambió el esquema de propiedades Networked.
 
-## Recorrido de aceptación (Editor + build nuevo o dos PCs)
+## Controles
 
-1. Menu → crear/unirse a la misma sala → Game + Environment 1. Seleccionar roles diferentes y marcar ambos LISTO. Ver alerta SQLI-001/1 en ambos.
-2. Pentester: acercarse al servidor. El indicador inferior muestra distancia. A 4 m o menos, E o TAB abre la terminal. Leer evidencias, elegir Fuerza bruta, confirmar diagnóstico y enviar reporte. Comprobar penalización de 10 puntos, espera de 5 s y retorno al análisis en ambos clientes. Doble clic no debe duplicar el cobro.
-3. Pentester: elegir SQL Injection, confirmar y enviar. Administrador: comprobar notificación de reporte recibido en el indicador inferior y en su consola.
-4. Administrador: acercarse a la consola asociada, E/TAB. Probar Servicio de correo: feedback sin avance. Elegir Portal de matriculas y contener. El servidor cambia a amarillo; el acceso se aísla solo en la simulación.
-5. Administrador: probar Reiniciar servidor: feedback sin resolución. Elegir Consultas parametrizadas. Queda pendiente la verificación del Pentester; el Administrador no dispone de ese botón.
-6. Pentester: volver a la terminal y verificar. Ambas pantallas deben mostrar incidente resuelto, servicio restaurado, explicación educativa y la misma penalización. Servidor verde. El resultado de verificación está guionizado; no se conecta a una base de datos ni ejecuta una consulta real.
-7. Abrir/cerrar terminal con TAB, ESC y botón Cerrar; abrir/cerrar pausa; escribir en chat. Confirmar recuperación de movimiento, salto y cámara de ambos. Alejarse de la terminal cierra su interfaz y bloquea solicitudes remotas fuera de rango.
-8. Repetir invirtiendo quién crea la sala y quién toma cada rol. Probar desconexión en investigación, reporte y verificación. Las acciones se suspenden sin compañero; cuando una nueva pareja marca LISTO se inicia un nuevo número de incidente y se limpia la penalización. No se reanuda como si el reemplazo hubiera aportado el reporte anterior.
-9. Salir → Menu → crear/unirse a otra sesión. El incidente debe comenzar limpio. No cambiar a Environment 2 para esta misión: allí no existen las dos estaciones.
+- WASD: caminar; ratón: mirar; espacio: saltar; Shift: correr sin tablet.
+- TAB: sacar/guardar tablet. Al abrir, entra en consulta: permite caminar despacio y mirar.
+- F1: alternar cursor/interacción de tablet. En este modo se detiene el movimiento.
+- Mientras un campo de texto tiene foco, las teclas no mueven al personaje ni abren otras herramientas.
+- E cerca de una estación: abrir la PC/terminal propia del rol.
+- ESC: campo de texto → modo consulta/cerrar PC → pausa. Una pulsación no debe ejecutar dos niveles.
+- La pausa es individual; no modifica el tiempo compartido.
+- El chat y la voz se conservan. El HUD indica MIC ACTIVO al usar push-to-talk; no es una prueba de que el dispositivo esté transmitiendo correctamente.
 
-## Archivos de esta etapa
+## Recorrido configurado
 
-Nuevos (con sus .meta):
-- Assets/Scripts/Roles/IncidentRules.cs: transiciones independientes de Unity/Fusion.
-- Assets/Scripts/Roles/IncidentDefinition.cs y SQLInjection.asset: datos y configuración educativa.
-- Assets/Scripts/Roles/CooperativeIncident.cs: estado replicado, RPC, identidad, proximidad y control de duplicados por número/revisión.
+1. Menu → sala → Game + Environment 1 → roles distintos y ambos LISTO.
+2. Tutorial/exploración libre por rol. TAB, F1 y pestaña TUTORIAL. Ambos completan las páginas o pulsan explícitamente omitir y preparado. El reloj de misión aún no corre.
+3. Alerta e inicio del cronómetro. Pentester localiza **SRV-01**, introduce el ID en su tablet cerca del servidor y conecta. Un ID incorrecto no resta puntos.
+4. Iniciar análisis: barra de 5 segundos. Cerrar la pantalla permite continuar mientras permanece cerca. Alejarse cancela sin éxito ni recompensa.
+5. E abre la estación del servidor. Seleccionar las tres evidencias observadas: concatenación, alteración de consulta y acceso sin sesión. El correo de phishing es un distractor.
+6. Pestaña TICKETS: diagnóstico, gravedad, recomendación, servicio, evidencias y comentario opcional. Los campos comienzan sin elegir. Puede redactar/enviar desde cualquier lugar después de analizar.
+7. Administrador recibe resumen/código en su tablet. E cerca de **PC ADMIN**, pestaña TICKETS, introducir código TK-001-001 (o el mostrado). El informe completo se abre al validar el código.
+8. Puede devolverlo. Un informe incorrecto se penaliza una sola vez al revisarlo; si además el Administrador intenta aceptarlo, se registra su decisión incorrecta. Nunca se acepta un reporte inválido ni se bloquea una corrección.
+9. Con reporte aceptado, OPERACIONES en PC: contener **Portal de matrículas** (3 s).
+10. Reparación: seleccionar en orden sustituir concatenación por parámetros → probar entradas y acceso legítimo → desplegar en servicio aislado (5 s). Reiniciar sin corregir no resuelve.
+11. Pentester, en servidor: evaluar ambas pruebas simuladas y verificar (4 s). Servicio restaurado y resultado para ambos.
+12. HISTORIAL muestra tiempo, tutorial, puntos, contribuciones, versiones de tickets, errores, pistas y cronología. Repetir/intercambiar requiere votos coincidentes de ambos. Volver al menú cierra el Runner por el camino existente.
+13. Si alguien sale durante tutorial/misión, se interrumpe. El restante consulta el informe y vuelve al menú; no se sustituye al compañero ni se reinicia automáticamente. Si la conexión local se pierde, el menú muestra la última instantánea recibida, claramente etiquetada.
 
-Modificados:
-- Assets/Scripts/Roles/RoleTerminalUI.cs: interfaz funcional de los dos roles y bloqueo de controles reutilizado.
-- Assets/Clean Multiplayer Pro/Scripts/ScripsNew/PlayerRole.cs: interacción abre la misión cuando está presente; conserva prototipo para otras escenas.
-- Assets/Clean Multiplayer Pro/Scripts/ScripsNew/ServidorRed.cs: bloquea RPC antiguos durante la misión y refleja estado visual.
-- Assets/Clean Multiplayer Pro/Scenes/Game.unity: un componente en RoleSystem y su registro de red.
-- Assets/Clean Multiplayer Pro/Scenes/Environment 1.unity: solo Flags del NetworkObject del servidor, de DestroyWhenStateAuthorityLeaves a MasterClientObject.
+## Configuración editable y conexión
 
-## Diseño y límites
+- **Assets/Scripts/Roles/SQLInjection.asset**: siete pasos explícitos; ID SRV-01; radio 4 m; operaciones 5/3/5/4 s; velocidad con tablet 0.65; penalización 10; pistas 3; error sin descuento de tiempo ni espera añadida (penaltyDelay=0).
+- **Assets/Resources/MissionPresentation.asset**: referencia al prefab de tablet existente de iPoly3D, sonidos Click/Notification de Heat, temas y transformaciones de la tablet local. Transiciones 0.25 s.
+- **Assets/Resources/PentesterSkin.asset** y **AdminSkin.asset**: verde/negro y azul/cian/negro. Se cargan desde el asset de presentación, no hace falta arrastrarlos a mano a la escena.
+- Game conserva su **RoleSystem / CooperativeIncident** registrado en NetworkedBehaviours y su referencia a SQLInjection.asset. No se agregó otro objeto coordinador de red.
+- El bool TabletRaised se añadió al PlayerRole ya registrado en los prefabs. GetPlayerCameraAndControls crea la presentación visual en cada instancia; solo el dueño controla su bit.
+- Las estaciones existentes ServidorRed/ConsolaControl se reutilizan. Las etiquetas y luces se crean localmente sobre ellas. Environment 2 no tiene estas estaciones: no cambiar de escenario para esta misión.
+- Heat sigue gestionando menú/pausa. El adaptador centraliza ESC y el bloqueo; las animaciones no hacen avanzar la red.
 
-La autoridad valida al emisor RPC usando el registro de RoleManager (no el MyRole declarado por un avatar). Exige dos jugadores activos distintos, pareja coincidente con la del incidente, distancia a la estación y revisión actual. Los dobles envíos de una revisión ya procesada se ignoran. Las acciones fuera de fase no progresan. Un cambio de master con la misma pareja conserva propiedades Networked; un reemplazo de participante inicia otro ejercicio. Shared no es un servidor dedicado antitrampas: un cliente que modifique su propio proceso no está cubierto por estas comprobaciones.
+## Arquitectura y comportamiento
 
-Datos, reglas, networking y UI están separados. Agregar otro incidente requerirá su definición y reglas/presentación específicas; no se han implementado otros ataques. Los estados de contención y reparación son simulados y no ejecutan tráfico, SQL ni comandos del sistema.
+CooperativeIncident conserva la autoridad de tutorial, cronómetro, operaciones, tickets, puntuación, revisiones e historial. IncidentEngine evalúa los pasos. TicketRules valida estructura y coherencia educativa del reporte. RoleTerminalUI gestiona borrador, cursor y páginas locales. MissionPresentationConfig/TabletPresentation/MissionWorldPresentation gestionan presentación.
+
+Los RPC comprueban emisor activo, rol, incidente, revisión, paso y proximidad cuando corresponde. Las solicitudes antiguas y duplicadas no vuelven a aplicar puntos. RPC_Hint exige el rol del paso, limita los bits e incrementa revisión. Un ticket no necesita proximidad para redactarse/enviarse; identificar, analizar, revisar en PC y operar sí.
+
+El escenario y la reparación son simulados: no hay red externa de ataque, ejecución SQL ni reinicios reales. Shared no equivale a un servidor dedicado antitrampas.
 
 ## Verificación realizada
 
-- Compilación C# con referencias locales de Unity/Fusion para Editor y Player: exit 0. Advertencias anteriores de BugSimulator y SetupWizard.
-- 24 comprobaciones sobre los scripts reales RoleManager, CooperativeIncident e IncidentRules con sustitutos de Unity/Fusion: pasan. Cubren permisos, proximidad, estados, opciones inválidas, penalización, cooldown, duplicados, desconexión, reemplazo y secuencia completa.
-- Estos sustitutos NO verifican transporte Photon, IL weaving, orden de callbacks, físicas ni interfaz renderizada. Esa validación requiere la prueba anterior.
-- Respaldos previos, código de pruebas y logs están en las carpetas externas indicadas en la entrega. Sin commits automáticos ni cambios de paquetes.
+- C# compilado con referencias locales para Editor y Player: sin errores; advertencias previas de BugSimulator y SetupWizard.
+- **51 comprobaciones reproducibles** en Tests/Mission: tutorial, permisos, ID, operaciones/cancelación, pistas/doble clic, reportes incorrectos, revisión/corrección, reparación, verificación, cronómetro, repetición e interrupción.
+- Estas pruebas compilan los scripts reales contra sustitutos mínimos de Unity/Fusion. NO ejecutan transporte, física, Input System, IL weaving ni renderizado.
+- Intento de build por línea de comandos: Unity exit 1; no se generó un ejecutable validado. El control de la ventana del Editor agotó el tiempo de respuesta, por lo que no se verificaron capturas de la UI.
+- No se instalaron paquetes, no se hicieron commits, no se borraron assets ni se modificaron escenas de usuario durante esta etapa. Se conservaron cambios de metadatos .plastic aparecidos durante el trabajo.
+
+## Pendientes y límites explícitos
+
+- Es obligatorio validar importación, referencias reales del prefab, procesamiento Fusion y dos clientes. La compilación C# sola no demuestra esto.
+- La postura remota al sostener tablet es procedural/provisional. Se reutiliza el modelo existente; falta ajustar artísticamente posición, orientación y brazos según la prueba visual. No se creó un rig nuevo de manos en primera persona.
+- La malla del avatar propio pasa a ShadowsOnly en su instancia local para evitar ver rostro/interior. El compañero conserva el modelo completo. Falta probar mirada abajo, paredes, movimiento y escala de cámara en ambos.
+- Historial replicado acotado: últimas 64 entradas (detalle de hasta 64 caracteres) y últimas 16 versiones de ticket; si se excede, se informa y los totales siguen conservados. No hay almacenamiento permanente entre sesiones.
+- El código del ticket es una referencia de consulta, no una contraseña ni un mecanismo de seguridad.
+- El flujo de tickets de esta entrega exige los siete pasos configurados; crear otro ataque requiere adaptar sus reglas/flujo, no solo cambiar su título.
+- Falta revisar layout, tamaños y contraste a 1920×1080 y otras resoluciones, audio y uso simultáneo de chat/voz/tablet.
+
+## Matriz mínima de aceptación real
+
+Repetir con creador de sala como Pentester y luego Administrador:
+- Dos avatares independientes; caminar/correr/saltar/cámara.
+- Tutorial: uno preparado no inicia; dos sí. Omitir queda registrado.
+- TAB/F1/ESC, campos de texto, chat y pausa sin bloqueos persistentes.
+- ID incorrecto sin penalización; barra no da éxito al cancelar/alejarse.
+- Ticket erróneo, devolución, corrección, código erróneo y aceptación.
+- Doble clic en enviar/pista/aceptar/reparar: un único efecto.
+- Roles no pueden usar las herramientas exclusivas del compañero.
+- Contener → reparar → verificar; mismos tiempos/puntos/resultados en ambos.
+- Informe scrollable y explicación final; repetición coordinada e intercambio.
+- Desconexión de cualquiera durante tutorial, análisis y reparación: sesión interrumpida.
+- Salir → menú → nueva sala, sin Runner duplicado ni estado residual.
+
+## Correccion del bloqueo de seleccion de roles
+Los registros de Unity y del ejecutable mostraron un AssertException al registrar RoleSystem: 87.724 bytes frente al limite de 32.768 de Fusion. Al no inicializarse RoleManager, los botones permanecian deshabilitados. Se redujeron las capacidades del historial y se agregaron validaciones del tamano tejido por Fusion antes del build y del tamano de cada NetworkObject al procesar escenas. Se conservaron los comentarios de tickets de 128 caracteres.
+Verificacion: 47 pruebas de logica con sustitutos del motor aprobadas y compilacion C# con bibliotecas locales aprobada. La ejecucion batch de Unity fue rechazada por otra instancia con el proyecto abierto. Pendiente: recompilacion/weaving en Unity y recorrido con dos clientes nuevos; los ejecutables anteriores conservan el error. No se ha comprobado el clic en ejecucion tras este cambio.
+
+## Tickets y tablet importada
+- Corregido RPC_Ticket: el parametro NetworkString<_128> reservaba 516 bytes, y el mensaje completo excedia 512 bytes (552 observados). Ahora usa string UTF-8 limitado antes del envio y de nuevo al recibir a 128 caracteres UTF-16; el registro de red sigue usando NetworkString<_128>. Tambien se corrigio RPC_Error, que utilizaba el mismo almacenamiento fijo sobredimensionado.
+- Asset utilizado: Assets/Security Systems/Free Version/Prefabs/TabletDisplay01.prefab, Tablet based Single Camera System 2.0. MissionPresentation.asset lo referencia. TabletPresentation adapta solo la instancia: desactiva los controles de demostracion dependientes de la camara global y de F12, ajusta el ancho a 32 cm, agrega pantalla de estado por rol y conserva la animacion Tab y el estado compartido TabletRaised.
+- La pantalla fisica muestra estado; los formularios interactivos siguen en RoleTerminalUI (Tab/F1). No se ha integrado videovigilancia ni trasladado los formularios al cristal 3D. No se modificaron los archivos originales del asset. Posicion y rotacion siguen siendo ajustables en MissionPresentation.asset.
+- Validacion: 51 pruebas de logica aprobadas (incluyen UTF-8, limite del comentario y pares sustitutos); compilacion C# de Editor y jugador con bibliotecas locales aprobada. Estas pruebas no ejecutan el transporte real ni validan el aspecto visual. Pendiente: verificar importacion/weaving en Unity, posicion y orientacion del modelo, y envio/recepcion del ticket en dos clientes recompilados.
+- Prueba: detener Play, dejar compilar; crear build nuevo para ambos clientes. Elegir roles, completar tutorial, investigar y enviar ticket con comentario de 128 caracteres (tambien acentos). Comprobar codigo en tablet Admin y abrirlo en PC. Probar Tab/F1 en ambos, caminar con tablet en consulta y comprobar que no se abre la tablet del otro jugador. Confirmar ausencia de payload is too large y errores de TabletDisplayController.
+## Interfaz interactiva en el cristal de la tablet
+Actualiza la integracion anterior: RoleTerminalUI aloja ahora su panel completo dentro del Canvas WorldSpace de la tablet local (TabletPresentation.LocalScreen). El PC mantiene su vista de estacion. Las copias remotas solo muestran estado publico. No se crean camaras adicionales ni RenderTextures compartidas.
+
+Corregida la perdida de foco: Refresh desactivaba y reactivaba el formulario y el identificador en cada fotograma. Ahora calcula su visibilidad y solo cambia el estado cuando corresponde; lo mismo aplica a los botones. Los campos tienen targetGraphic, cursor de escritura y bloqueo de movimiento al escribir. No se borran los borradores al cambiar entre consulta e interaccion.
+
+TAB abre la tablet con cursor; F1 cambia entre interaccion y consulta para caminar. ESC primero termina la escritura, luego sale de interaccion y finalmente cierra la tablet. En modo interaccion la tablet se acerca y se centra suavemente. El formulario separa diagnostico/evidencias, destaca la pestana activa y utiliza el ancho disponible para lectura cuando no hay opciones laterales.
+
+Verificado: compilacion C# con bibliotecas instaladas para Editor y jugador. Pendiente en Unity: correspondencia visual del Canvas con el cristal, clic y escritura prolongada en ID/comentario/codigo, seleccion y borrado de texto, scroll, abrir/cerrar/pasar al PC y volver, pausa y reconexion. Probar ambos roles con ejecutables nuevos; las 51 pruebas anteriores validan logica, no eventos de teclado ni raycasts 3D.

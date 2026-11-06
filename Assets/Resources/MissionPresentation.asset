@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3d0183e546804befb91a53f2750f2720, type: 3}
+  m_Name: MissionPresentation
+  m_EditorClassIdentifier:
+  tabletPrefab: {fileID: 6456363405161935073, guid: d37c84bfb8ca47345bab04e1a6c622c5, type: 3}
+  pentesterSkin: {fileID: 11400000, guid: ce3dcec4d48b49ec954fb73a22d822be, type: 2}
+  adminSkin: {fileID: 11400000, guid: 70e4231e316d42fa808da6509d9d2e69, type: 2}
+  notification: {fileID: 8300000, guid: 35a7b929e025d674898e2f6a2d87c68a, type: 3}
+  click: {fileID: 8300000, guid: 4656469a7b79f5c4a84f2ecd79f129d1, type: 3}
+  transitionSeconds: 0.25
+  tabletLocalPosition: {x: 0.16, y: -0.22, z: 0.45}
+  tabletLocalEuler: {x: 10, y: -8, z: -3}
+  tabletScale: 1
+  adaptSecurityTablet: 1

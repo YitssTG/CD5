@@ -6,6 +6,13 @@ public class IncidentDefinition : ScriptableObject
 {
     public string incidentId = "SQLI-001";
     public string title = "Acceso anomalo al portal de matriculas";
+    [Header("Sesion y operaciones simuladas")]
+    public string serverId = "SRV-01";
+    [Min(0.5f)] public float analysisSeconds = 5;
+    [Min(0.5f)] public float containmentSeconds = 3;
+    [Min(0.5f)] public float repairSeconds = 5;
+    [Min(0.5f)] public float verificationSeconds = 4;
+    [Range(0.2f, 1f)] public float tabletWalkMultiplier = 0.65f;
 
     [Header("Compatibilidad (Tarea 03)")]
     [Min(0)] public int wrongReportPenalty = 10;

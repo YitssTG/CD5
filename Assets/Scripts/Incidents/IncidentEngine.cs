@@ -62,7 +62,7 @@ public static class IncidentEngine
         }
 
         MinigameDefinition def = step.minigame;
-        if (!def.HasOptions)
+        if (!def.HasOptions || def.options.Length > 30)
         {
             feedback = IncidentFeedback.NotAllowed;
             return false;
@@ -105,7 +105,17 @@ public static class IncidentEngine
         if (def.IsSequence)
         {
             int[] order = def.EffectiveOrder();
-            if (order == null || order.Length == 0) return false;
+            if (order == null || order.Length == 0 || order.Length > MinigameSelection.MaxSequence) return false;
+            for (int i = 0; i < order.Length; i++)
+                if (order[i] < 0 || order[i] >= options.Length || options[order[i]] == null) return false;
+            int seen = 0;
+            for (int i = 0; i < MinigameSelection.MaxSequence; i++)
+            {
+                int raw = (int)(((uint)choice >> (8 * i)) & 255);
+                if (i >= order.Length) { if (raw != 0) return false; continue; }
+                if (raw < 1 || raw > options.Length || (seen & (1 << (raw - 1))) != 0) return false;
+                seen |= 1 << (raw - 1);
+            }
             correct = MinigameSelection.MatchesOrder(choice, order);
             return true;
         }
